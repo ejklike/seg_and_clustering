@@ -19,12 +19,10 @@ import matplotlib.pyplot as plt
 
 from TICC.TICC_solver import TICC
 
-import my_ftn
-from my_dist import trip_length
+import utils
+from viz_segment import (draw_path, 
+                         plot_clustering_result)
 
-# import viz_font
-from viz_segment import draw_path, plot_clustering_result, plot_path_by_segment
-# from Visualize_function import visualize
 
 #####################
 # TICC SETTING
@@ -241,18 +239,18 @@ if __name__ == '__main__':
 
     # recorder object for saving meta data
     # vin,ign_on_time,ign_on_time_str,window_size,lambda,beta,n_cluster,bic
-    recorder = my_ftn.Recorder('result_table_vin_{}.csv'.format(target_vin))
+    recorder = utils.Recorder('result_table_vin_{}.csv'.format(target_vin))
 
     # loop modeling for all trip
     ign_on_time_list = list(df.ign_on_time.unique())
     for ign_on_time in ign_on_time_list:
 
         # define some strirng
-        trip_str = my_ftn.get_str_of_trip(target_vin, ign_on_time)
+        trip_str = utils.get_str_of_trip(target_vin, ign_on_time)
         prefix_string = (
             'output_folder/' + target_vin + '/' 
-            + my_ftn.strftime(ign_on_time) + '/')
-        my_ftn.maybe_exist(prefix_string)
+            + utils.strftime(ign_on_time) + '/')
+        utils.maybe_exist(prefix_string)
         print('---', trip_str)
 
         # check if it is already modeled.
@@ -267,7 +265,7 @@ if __name__ == '__main__':
             continue
 
         # filter to target vin and ign_on_time
-        df_row_filtered = my_ftn.filter_df_by(df, target_vin, ign_on_time)
+        df_row_filtered = utils.filter_df_by(df, target_vin, ign_on_time)
         # shorten column names
         # 1) basic
         df_for_modeling = shorten_colnames(df_row_filtered[columns_for_modeling])
@@ -286,8 +284,8 @@ if __name__ == '__main__':
 
         # trip summary
         n_row = len(df_row_filtered)
-        dist = trip_length(df_row_filtered.longitude, 
-                           df_row_filtered.latitude)
+        dist = utils.trip_length(df_row_filtered.longitude, 
+                                 df_row_filtered.latitude)
         duration = n_row / 60
         print('    Total {} rows ({:.1f}km for {:.0f}min)'
               .format(n_row, dist, duration))
@@ -300,7 +298,7 @@ if __name__ == '__main__':
         # save meta data of results
         # vin,ign_on_time_str,ign_on_time,window_size,lambda,beta,n_cluster,bic
         recorder.append_values([
-            target_vin, my_ftn.strftime(ign_on_time), ign_on_time, 
+            target_vin, utils.strftime(ign_on_time), ign_on_time, 
             n_row, dist, duration,
             window_size, lambda_parameter, beta, 
             number_of_clusters, bic, 

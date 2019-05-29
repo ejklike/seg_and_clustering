@@ -10,8 +10,7 @@ from matplotlib.lines import Line2D
 import matplotlib.patches as patches
 from matplotlib.ticker import FormatStrFormatter
 
-from my_dist import trip_length
-import my_ftn
+import utils
 
 
 # plt.rcParams.update({'font.size': 8})
@@ -33,10 +32,10 @@ def draw_path(df, vin, ign_on_time,
               cluster_assignment=None, 
               save_to=None, show=True,
               verbose=False):
-    path = my_ftn.filter_to_one_path(df, vin, ign_on_time)
+    path = utils.filter_to_one_path(df, vin, ign_on_time)
     if verbose:
         print('len of lon, lat: ', len(path[0]), len(path[1]))
-    title = my_ftn.get_str_of_trip(vin, ign_on_time)
+    title = utils.get_str_of_trip(vin, ign_on_time)
     plot_path_by_segment(*path, cluster_assignment=cluster_assignment, 
                          title=title, save_to=save_to, figsize=(6, 6), show=show)
 
@@ -184,7 +183,7 @@ def plot_path_by_segment(longitude, latitude,
     ax.annotate('Start', xy=(longitude[0], latitude[0]), fontsize=12)
     ax.annotate('End', xy=(longitude[-1], latitude[-1]), fontsize=12)
 
-    len_trip = trip_length(longitude, latitude)
+    len_trip = utils.trip_length(longitude, latitude)
     ax.annotate('Trip summary:\n{:,.0f}min, {:.2f}km'
                 .format(len(longitude)/60, len_trip), 
                 xy=(longitude.mean(), latitude.mean()))

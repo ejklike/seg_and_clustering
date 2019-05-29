@@ -1,36 +1,8 @@
 import os
-import sys
-import inspect
+from geopy.distance import vincenty as dist
 
+import numpy as np
 import pandas as pd
-
-
-# https://stackoverflow.com/questions/47908281/
-# python-memory-consumption-of-objects-and-process
-# def get_size(obj, seen=None):
-#     """Recursively finds size of objects in bytes"""
-#     size = sys.getsizeof(obj)
-#     if seen is None:
-#         seen = set()
-#     obj_id = id(obj)
-#     if obj_id in seen:
-#         return 0
-#     # Important mark as seen *before* entering recursion to gracefully handle
-#     # self-referential objects
-#     seen.add(obj_id)
-#     if hasattr(obj, '__dict__'):
-#         for cls in obj.__class__.__mro__:
-#             if '__dict__' in cls.__dict__:
-#                 d = cls.__dict__['__dict__']
-#                 if inspect.isgetsetdescriptor(d) or inspect.ismemberdescriptor(d):
-#                     size += get_size(obj.__dict__, seen)
-#                 break
-#     if isinstance(obj, dict):
-#         size += sum((get_size(v, seen) for v in obj.values()))
-#         size += sum((get_size(k, seen) for k in obj.keys()))
-#     elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
-#         size += sum((get_size(i, seen) for i in obj))
-#     return size
 
 
 def maybe_exist(directory):
@@ -63,9 +35,16 @@ def filter_to_one_path(df_, vin, ign_on_time):
     x, y = df.longitude.values, df.latitude.values
     return x, y
 
-    # x_normal = [a for a, b in zip(x, y) if a != 0 and b != 0]
-    # y_normal = [b for a, b in zip(x, y) if a != 0 and b != 0]
-    # return x_normal, y_normal
+
+def trip_length(longitude, latitude):
+    # vincenty(dist) function get (latitude, longitude) pair!
+    xy = np.array([latitude, longitude]).T.reshape(-1, 2)
+    
+    total_length = 0.
+    for start, stop, in zip(xy[:-1], xy[1:]):
+        total_length += dist(start, stop).km
+    
+    return total_length
 
 
 class Recorder(object):
