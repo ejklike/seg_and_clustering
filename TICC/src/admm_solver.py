@@ -1,7 +1,15 @@
 import numpy
 import math
+
+
 class ADMMSolver:
-    def __init__(self, lamb, num_stacked, size_blocks, rho, S, rho_update_func=None):
+    def __init__(self, 
+                 lamb, 
+                 num_stacked, 
+                 size_blocks, 
+                 rho, 
+                 S, 
+                 rho_update_func=None):
         self.lamb = lamb
         self.numBlocks = num_stacked
         self.sizeBlocks = size_blocks
@@ -115,16 +123,22 @@ class ADMMSolver:
             self.ADMM_z()
             self.ADMM_u()
             if i != 0:
-                stop, res_pri, e_pri, res_dual, e_dual = self.CheckConvergence(z_old, eps_abs, eps_rel, verbose)
+                stop, res_pri, e_pri, res_dual, e_dual = \
+                    self.CheckConvergence(z_old, 
+                                          eps_abs, 
+                                          eps_rel, 
+                                          verbose)
                 if stop:
                     self.status = 'Optimal'
                     break
-                new_rho = self.rho
+                
                 if self.rho_update_func:
                     new_rho = rho_update_func(self.rho, res_pri, e_pri, res_dual, e_dual)
+                else:
+                    new_rho = self.rho
                 scale = self.rho / new_rho
-                rho = new_rho
                 self.u = scale*self.u
+            
             if verbose:
                 # Debugging information prints current iteration #
                 print('Iteration %d' % i)
