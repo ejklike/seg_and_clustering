@@ -1,13 +1,29 @@
 """
 python ticc_with_bic.py [vin] [window_size]
----
-python ticc_with_bic.py 5NMS33AD0KH034994 2
-python ticc_with_bic.py 5NMS33AD6KH026656 2
+
+For each trip of the input vin, 
+
+1) Find the TICC solution
+    - Find the best cluster size based on bic
+    - cluster size in [min_cluster_size, max_cluster_size]
+      
+2) Draw png files corresponding to the optimal solution
+    - signal
+    - path
+    - mrfs
+
+Example
+-------
+python ticc_with_bic.py 5NMS33AD0KH034994 1
+python ticc_with_bic.py 5NMS33AD6KH026656 1
+-------
+python ticc_with_bic.py 5NMS53AD9KH003365 1
+python ticc_with_bic.py 5NMS5CAA5KH018550 1
 """
 
+import argparse
 import os
 import glob
-import gc
 import sys
 import warnings
 warnings.filterwarnings("ignore")
@@ -20,8 +36,9 @@ import matplotlib.pyplot as plt
 from TICC.TICC_solver import TICC
 
 import utils
-from viz_segment import (draw_path, 
+from viz_segment import (plot_path_by_segment, 
                          plot_clustering_result)
+# from betweeness_centrality import betweeness_centrality_wrapper
 
 
 #####################
@@ -79,231 +96,332 @@ def shorten_colnames(df_):
     return df
 
 
-def download_data(target_vin, save_to=None):
-    import pyodbc
+def run_ticc(data_for_modeling, number_of_clusters, prefix_string, args):
 
-    conn = pyodbc.connect('Dsn=Hive;uid=h1903174;pwd=h1903174!01', 
-                      autocommit=True)
-    cursor = conn.cursor()
-
-    tablename = 'a302_rawsmpl_new_tma_2019_g'
-    query = '''\
-    SELECT vin, ign_on_time, trip_match_key, t, 
-        latitude, longitude, 
-        ems11_n, ems11_vs, ems12_brake_act, tcu12_cur_gr, ems11_tqi_acor, 
-        mdps_sas11_fs_sas_angle, sas_sas11_fs_sas_angle, sas11_fs_sas_speed, 
-        esp12_lat_accel, esp12_long_accel, ems12_pv_av_can
-    FROM h1903174.%s
-    WHERE vin in ("%s")''' % (tablename, target_vin)
-    print(query)
-    df = pd.read_sql(query, conn)
-    if save_to is not None:
-        df.to_csv(save_to, index=None)
-    return df
-
-
-def run_ticc(data_for_modeling, cmin=3, cmax=20):
-
-    ticc_results = dict()
-    best_n_cluster = 0
-    best_bic = -1
-
-    for number_of_clusters in range(cmin, cmax+1):
-        
-        # EXCEPTION criteria: n_sample vs. n_component
-        if n_row - window_size + 1 <= number_of_clusters:
-            print('n_cluster={} | n_sample={} is insufficient.'
-                    .format(number_of_clusters, n_row))
-            continue
-
-        ticc = TICC(window_size=window_size, 
-                    number_of_clusters=number_of_clusters, 
-                    lambda_parameter=lambda_parameter, 
-                    beta=beta, 
-                    maxIters=maxIters, 
-                    threshold=threshold,
-                    write_out_file=write_out_file, 
-                    prefix_string=prefix_string, 
-                    num_proc=num_proc,
-                    compute_BIC=True, 
-                    verbose=False)
-        cluster_assignment, cluster_MRFs, bic = ticc.fit(data_for_modeling)
-        if cluster_assignment is not None:
-            ticc_results[number_of_clusters] = {
-                'cluster_assignment': cluster_assignment,
-                'cluster_MRFs': cluster_MRFs,
-                'bic': bic,
-                'str_NULL': ticc.str_NULL}
-        print('n_cluster={} | bic={:.1f}'.format(number_of_clusters, bic), end=' ')
-        if bic > best_bic:
-            best_n_cluster = number_of_clusters
-            best_bic = bic
-            print('--best up to now!')
-        else:
-            print('')
-        del ticc
-    
-    # set model results
-    number_of_clusters = best_n_cluster
-    bic = best_bic
-
-    if number_of_clusters == 0.:
-        print(' > THE MODEL DOES NOT CONVERGE FOR ALL CLUSTER NUMBERS. < ')
-        draw_path(df_row_filtered, target_vin, ign_on_time, 
-            save_to=prefix_string + 'Result_xy_NOT_CONVERGE.png')
+    # EXCEPTION criteria: 
+    # n_sample is insufficient compared to n_component
+    n_sample = data_for_modeling.shape[0]
+    n_sample_is_insufficient = \
+        n_sample - args.ws + 1 <= number_of_clusters
+    if n_sample_is_insufficient:
+        cluster_assignment = None
+        cluster_MRFs = None
+        bic = -1
 
     else:
-        # get model results
-        cluster_assignment = ticc_results[number_of_clusters]['cluster_assignment']
-        cluster_MRFs = ticc_results[number_of_clusters]['cluster_MRFs']
-        str_NULL = ticc_results[number_of_clusters]['str_NULL']
-        bic = ticc_results[number_of_clusters]['bic']
-        # out to the ./output_folder/vin/ign_on_time
-        str_NULL_list = str_NULL.split('/')
-        str_NULL_prefix = str_NULL_list.pop(-2)
-        str_NULL = '/'.join(str_NULL_list) + str_NULL_prefix + '_bic={:.1f}'.format(bic)
+        ticc = TICC(window_size=args.ws, 
+                    number_of_clusters=number_of_clusters, 
+                    lambda_parameter=args.ld, 
+                    beta=args.bt, 
+                    maxIters=args.maxiter, 
+                    threshold=args.threshold,
+                    write_out_file=write_out_file, 
+                    prefix_string=prefix_string, 
+                    num_proc=args.num_proc,
+                    compute_BIC=True, 
+                    verbose=args.verbose)
+        cluster_assignment, cluster_MRFs, bic = \
+            ticc.fit(data_for_modeling)
+
+    return bic, cluster_MRFs, cluster_assignment
 
 
-        # adjust cluster_assignment (oniy if window_size > 1)
-        diff = len(df_for_modeling) - len(cluster_assignment)
-        if diff > 0:
-            cluster_assignment = \
-                [cluster_assignment[0]] * diff + list(cluster_assignment)
-        elif diff < 0:
-            cluster_assignment = cluster_assignment[-diff:]
-        # assign clustering results
-        df_for_modeling.index =  cluster_assignment
-        df_row_filtered.index = cluster_assignment
-        # print(len(df_for_modeling), len(cluster_assignment))
-        # assert len(df_for_modeling) == len(cluster_assignment)
+def loop_ticc_modling(data_for_modeling, cmin, cmax, prefix_string):
+    best_nc = 0
+    best_bic = -1
+    best_cluster_assignment = None
+    best_cluster_MRFs = None
 
-        plot_clustering_result(
-            df_for_modeling, figsize=(24, 16),
-            title='TICC_clustering result | {}'.format(trip_str),
-            save_to=str_NULL + '.png', show=False)
+    # find the best num of clusters based on bic score
+    for number_of_clusters in range(cmin, cmax+1):
 
-        draw_path(df_row_filtered, target_vin, ign_on_time, 
-                cluster_assignment=cluster_assignment,
-                save_to=str_NULL + '_xy.png', show=False)
+        # ./output_folder/vin/ign_on_time/ld=#bt=#ws=#nc=#/solution.pkl
+        this_prefix_string = prefix_string + "nC=" + str(number_of_clusters)
+        utils.maybe_exist(this_prefix_string)
+        this_solution_path = this_prefix_string + "/solution.pkl"
 
-        # CHECK MRF: dependencies btw variables
-        str_NULL_mrf = str_NULL + '_mrf/'
-        if not os.path.exists(os.path.dirname(str_NULL_mrf)):
-            try:
-                os.makedirs(os.path.dirname(str_NULL_mrf))
-            except OSError as exc:  # Guard against race condition of path already existing
-                raise
-        vmax = np.max(list(cluster_MRFs.values()))
-        vmin = np.min(list(cluster_MRFs.values()))
-        for k, mrf in cluster_MRFs.items():
-            with sns.axes_style("white"):
-                f, ax = plt.subplots()
-                sns.heatmap(mrf, square=True, vmin=vmin, vmax=vmax)
-                plt.savefig(str_NULL_mrf + '/k={}.png'.format(k))
-                plt.close('all')
+        ### if: solution is already obtained ==> load solution
+        if os.path.exists(this_solution_path):
+            # load solution
+            _, bic, cluster_MRFs, cluster_assignment = \
+                utils.load_solution(this_solution_path)
+        ### else: no solution exist ==> run ticc and get solution
+        else:
+            # run ticc
+            bic, cluster_MRFs, cluster_assignment = \
+                run_ticc(data_for_modeling, number_of_clusters, this_prefix_string, args)
+            # dump solution
+            solution_dict = {
+                'number_of_clusters': number_of_clusters,
+                'bic': bic,
+                'cluster_assignment': cluster_assignment,
+                'cluster_MRFs': cluster_MRFs}
+            utils.dump_solution(solution_dict, this_solution_path)
 
-        # ##With the inverses do some sort of thresholding
-        # for cluster in range(number_of_clusters):
-        #     out = (np.abs(cluster_MRFs[cluster]) > threshold).astype(np.int)
-        #     file_name = str_NULL_mrf + "Cross time graphs.jpg"
-        #     num_stacked = window_size - 1
-            
-        #     n = data_for_modeling.shape[1]
-        #     assert n == out.shape[1] // window_size
-        #     out2 = out[(num_stacked-1)*n:num_stacked*n, ]
-        #     names = [colname_dict[c] for c in columns_for_modeling]
-        #     if write_out_file:
-        #         visualize(out2, -1, num_stacked, names, file_name)
+        print('n_cluster={} | bic={:.1f}'
+              .format(number_of_clusters, bic), end='')
 
-    return number_of_clusters, bic
+        if bic > best_bic:
+            print(' --best up to now!')
+            best_nc = number_of_clusters
+            best_bic = bic
+            best_cluster_assignment = cluster_assignment
+            best_cluster_MRFs = cluster_MRFs
+        else:
+            print('')
+
+    return best_nc, best_bic, best_cluster_MRFs, best_cluster_assignment
 
 
 if __name__ == '__main__':
 
-    target_vin = sys.argv[1]
-    window_size = int(sys.argv[2])
+    # argument parser
+    parser = argparse.ArgumentParser()
 
-    # Load data 
+    parser.add_argument(
+        'target_vin', 
+        type=str, 
+        default=None,
+        help='target vin')
+    parser.add_argument(
+        '--ws', 
+        type=int, 
+        default=1,
+        help='window size')
+    parser.add_argument(
+        '--verbose', 
+        type=bool, 
+        nargs='?',
+        default=False, #default
+        const=True, #if the arg is given
+        help='verbose for TICC')
+    parser.add_argument(
+        '--num_proc', 
+        type=int, 
+        default=4,
+        help='the number of threads')
+
+    parser.add_argument(
+        '--ld', 
+        type=float, 
+        default=5e-3,
+        help='lambda (sparsity in Toplitz matrix)')
+    parser.add_argument(
+        '--bt', 
+        type=float, 
+        default=200,
+        help='beta (segmentation penalty)')
+    parser.add_argument(
+        '--maxiter', 
+        type=int, 
+        default=10,
+        help='maxiter')
+    parser.add_argument(
+        '--threshold', 
+        type=float, 
+        default=2e-5,
+        help='threshold')
+    parser.add_argument(
+        '--min_nc', 
+        type=int, 
+        default=3,
+        help='min_num_cluster')
+    parser.add_argument(
+        '--max_nc', 
+        type=int, 
+        default=20,
+        help='max_num_cluster')
+
+    # Parse input arguments
+    args, unparsed = parser.parse_known_args()
+    write_out_file = True
+
+    # Load rawdata 
     # (assume there is a target_vin data pre-dumped on local)
-    data_path = '../data/{}_{}.csv'.format(tablename, target_vin)
-    if not os.path.exists(data_path):
-        df = download_data(target_vin, save_to=data_path)
+    rawdata_path = '../data/{}_{}.csv'.format(tablename, args.target_vin)
+    if not os.path.exists(rawdata_path):
+        df = utils.download_data(args.target_vin, save_to=rawdata_path)
     else:
-        df = pd.read_csv(data_path, low_memory=False)
+        df = pd.read_csv(rawdata_path, low_memory=False)
     print('...data loaded\n')
 
-    print("lam_sparse", lambda_parameter)
-    print("switch_penalty", beta)
-    print("num stacked", window_size)
+    print("lam_sparse", args.ld)
+    print("switch_penalty", args.bt)
+    print("num stacked", args.ws)
     print('')
 
-    # recorder object for saving meta data
-    # vin,ign_on_time,ign_on_time_str,window_size,lambda,beta,n_cluster,bic
-    recorder = utils.Recorder('result_table_vin_{}.csv'.format(target_vin))
-
     # loop modeling for all trip
-    ign_on_time_list = list(df.ign_on_time.unique())
-    for ign_on_time in ign_on_time_list:
+    ign_on_time_list = list(df.ign_on_time.unique())# [240:]
+    for i, ign_on_time in enumerate(ign_on_time_list):
 
-        # define some strirng
-        trip_str = utils.get_str_of_trip(target_vin, ign_on_time)
-        prefix_string = (
-            'output_folder/' + target_vin + '/' 
+        # trip_str: [VIN: ... | ign_on_time: ... ]
+        trip_str = utils.get_str_of_trip(args.target_vin, ign_on_time)
+        print('--- {} ({}/{})'.format(trip_str, i+1, len(ign_on_time_list)))
+
+        # prefix_string: 
+        # ./output_folder/vin/ign_on_time/
+        base_folder = (
+            'output_folder/' + args.target_vin + '/' 
             + utils.strftime(ign_on_time) + '/')
-        utils.maybe_exist(prefix_string)
-        print('---', trip_str)
+        utils.maybe_exist(base_folder)
+
+        prefix_string = (base_folder
+                         + "ld=" + str(args.ld) 
+                         + "bt=" + str(args.bt)
+                         + "ws=" + str(args.ws))
+        
+        # WHERE THE OPTIMAL SOLUTION WILL BE SAVED
+        solution_path = prefix_string + "_solution.pkl"
+        data_path = prefix_string + "_inputData_and_clusterID.csv"
+        sig_path_wild = prefix_string + '*_signal.png'
+        xy_path_wild = prefix_string + '*_path.png'
 
         # check if it is already modeled.
-        fname_with_wildcard = (prefix_string + 
-            "ld=" + str(lambda_parameter) + 
-            "bt=" + str(beta) +
-            "ws=" + str(window_size) + "*.png")
-        result_figfiles = glob.glob(fname_with_wildcard)
-        if len(result_figfiles) > 0:
-            print('    Already modeled!')
-            print('    (Check "{}")'.format(result_figfiles[0].split('/')[-1]))
-            continue
+        is_solution_found = os.path.exists(solution_path)
+        is_data_and_clusterID_saved = os.path.exists(data_path)
+        is_signal_visualized = len(glob.glob(sig_path_wild)) > 0
+        is_path_visualized = len(glob.glob(xy_path_wild)) > 0
 
-        # filter to target vin and ign_on_time
-        df_row_filtered = utils.filter_df_by(df, target_vin, ign_on_time)
-        # shorten column names
-        # 1) basic
-        df_for_modeling = shorten_colnames(df_row_filtered[columns_for_modeling])
-        # 2) custom column (combining accel and brake)
-        # df_row_filtered['acc_brake'] = \
-        #     df_row_filtered['ems12_pv_av_can'] \
-        #         - (df_row_filtered['ems12_brake_act'] > 1).astype(np.float32) * 10
-        # df_for_modeling = shorten_colnames(df_row_filtered[columns_for_modeling])
+        print('--- Check File Existence ...')
+        print('--- Solution={} | DataFrame={} | SigViz={} | PathViz={}'
+              .format(is_solution_found, 
+                      is_data_and_clusterID_saved, 
+                      is_signal_visualized, 
+                      is_path_visualized))
 
-        # np array for modeling
-        # (option) standardize
-        # mean = df_for_modeling.mean(axis=0).values
-        # std = df_for_modeling.std(axis=0).values
-        # data_for_modeling = (df_for_modeling.values - mean) / std
-        data_for_modeling = df_for_modeling.values
+        require_data_and_solution = not (
+            is_solution_found and
+            is_data_and_clusterID_saved and
+            is_signal_visualized and
+            is_path_visualized)
 
-        # trip summary
-        n_row = len(df_row_filtered)
-        dist = utils.trip_length(df_row_filtered.longitude, 
-                                 df_row_filtered.latitude)
-        duration = n_row / 60
-        print('    Total {} rows ({:.1f}km for {:.0f}min)'
-              .format(n_row, dist, duration))
+        if require_data_and_solution:
 
-        # loop for all number_of_clusters
-        number_of_clusters, bic = run_ticc(data_for_modeling, 
-                                           min_num_cluster, 
-                                           max_num_cluster)
-        
-        # save meta data of results
-        # vin,ign_on_time_str,ign_on_time,window_size,lambda,beta,n_cluster,bic
-        recorder.append_values([
-            target_vin, utils.strftime(ign_on_time), ign_on_time, 
-            n_row, dist, duration,
-            window_size, lambda_parameter, beta, 
-            number_of_clusters, bic, 
-        ])
-        recorder.next_line()
+            #################
+            # LOAD DATA
+            #################
 
-        del df_row_filtered, df_for_modeling, data_for_modeling
-        gc.collect()
+            ### prepare data
+            print('> Load data ...', end='')
+            if not os.path.exists(data_path):
+                df_row_filtered = utils.filter_df_by(df, args.target_vin, ign_on_time)
+            else:
+                df_row_filtered = pd.read_csv(data_path, low_memory=False)
+
+            df_for_modeling = shorten_colnames( # filter columns
+                df_row_filtered[columns_for_modeling])
+            data_for_modeling = df_for_modeling.values # nparray for modeling
+            # data summary
+            n_row = len(df_row_filtered)
+            duration = n_row / 60
+            dist = utils.trip_length(df_row_filtered.longitude, 
+                                     df_row_filtered.latitude)
+            print('Total {} rows ({:.1f}km for {:.0f}min)'
+                .format(n_row, dist, duration))
+
+            #################
+            # FIND SOLUTION
+            #################
+            
+            ### if: solution is already obtained ==> load solution
+            if is_solution_found:
+                print('> Load solution ...')
+                number_of_clusters, bic, cluster_MRFs, cluster_assignment = \
+                    utils.load_solution(solution_path)
+            ### else: no solution exist ==> loop for all number of cluster sizes
+            else:
+                # ### prepare data
+                # df_row_filtered = utils.filter_df_by(df, target_vin, ign_on_time)
+                # df_for_modeling = shorten_colnames( # filter columns
+                #     df_row_filtered[columns_for_modeling])
+                # data_for_modeling = df_for_modeling.values # nparray for modeling
+
+                ### loop modeling
+                print('> Find soultion ...')
+                number_of_clusters, bic, cluster_MRFs, cluster_assignment = \
+                    loop_ticc_modling(data_for_modeling, 
+                                      args.min_nc, 
+                                      args.max_nc,
+                                      prefix_string)
+                ### dump solution
+                solution_dict = {
+                    'number_of_clusters': number_of_clusters,
+                    'bic': bic,
+                    'cluster_assignment': cluster_assignment,
+                    'cluster_MRFs': cluster_MRFs}
+                utils.dump_solution(solution_dict, solution_path)
+
+        ##########################################
+        # SAVE DATAFRAME WITH CLUSTERING RESULT
+        ##########################################
+
+        if not is_data_and_clusterID_saved:
+            if number_of_clusters > 0.:
+                # adjust cluster_assignment (oniy if window_size > 1)
+                adjustment = [cluster_assignment[0]] * (args.ws - 1)
+                cluster_assignment = adjustment + list(cluster_assignment)
+
+            print('> Save dataframe with clustering result  ...')
+            df_row_filtered['cluster_assignment'] = cluster_assignment
+            df_row_filtered.to_csv(data_path, index=None)
+
+        ##########################################
+        # VISUALIZE THE SOLUTION (SIGNAL, PATH)
+        ##########################################
+
+        if not is_signal_visualized or not is_path_visualized:
+            # check it is already visualized or not
+            prefix_string_for_viz = \
+                prefix_string + 'nC=' + str(number_of_clusters)
+
+        # draw png files
+        if not is_signal_visualized:
+            print('> Generate signal visualization png file ...')
+            if number_of_clusters > 0.:
+                sig_path = prefix_string_for_viz + '_signal.png'
+            else:
+                sig_path = prefix_string_for_viz + '(no_solution)_signal.png'
+
+            plot_clustering_result(df_for_modeling, 
+                                   cluster_assignment,
+                                   figsize=(24, 16),
+                                   title=trip_str,
+                                   save_to=sig_path, 
+                                   show=False)
+
+        if not is_path_visualized:
+            print('> Generate path visualization png file ...')
+
+            longitude = df_row_filtered.longitude.values
+            latitude = df_row_filtered.latitude.values
+
+            if number_of_clusters > 0.:
+                xy_path = prefix_string_for_viz + '_path.png'
+            else:
+                xy_path = prefix_string_for_viz + '(no_solution)_path.png'
+            
+            plot_path_by_segment(longitude, 
+                                 latitude, 
+                                 cluster_assignment=cluster_assignment, 
+                                 title=trip_str, 
+                                 save_to=xy_path, 
+                                 show=False)
+
+            zero_idx = [i for i in range(n_row) if longitude[i] == 0 and latitude[i] == 0]
+            if len(zero_idx) > 0:
+                print('>>>>>> Exist zero latitude and longitute points: #={}'.format(len(zero_idx)))
+                if number_of_clusters > 0.:
+                    xy_nonzero_path = prefix_string_for_viz + '_(nonzero)path.png'
+                else:
+                    xy_nonzero_path = prefix_string_for_viz + '(no_solution)_(nonzero)path.png'
+
+                print('>>>>>> Generate path (nonzero) visualization png file ...')
+                plot_path_by_segment(np.delete(longitude, zero_idx), 
+                                     np.delete(latitude, zero_idx), 
+                                     cluster_assignment=np.delete(cluster_assignment, zero_idx), 
+                                     title=trip_str, 
+                                     save_to=xy_nonzero_path, 
+                                     show=False)
+
+        if require_data_and_solution:
+            del df_row_filtered, df_for_modeling, data_for_modeling

@@ -24,23 +24,20 @@ palette = ['C0', 'C1', 'C2', 'C3', 'C4',
            'C5', 'C6', 'C7', 'C8', 'C9', 
            'b', 'r', 'c', 'm', 'y', 
            'g', 'crimson', 'steelblue', 'yellowgreen', 'mediumpurple']
+hexadecimal_color_list = [
+    "000099","ff00ff","00ff00","663300","996633",
+    "66ffff","3333cc","660066","66ccff","cc0000",
+    "0000ff","003300","33ff00","00ffcc","ffff00",
+    "ff9900","ff00ff","cccc66","666666","ffccff",
+    "660000","00ff00","ffffff","3399ff","006666",
+    "330000","ff0000","cc99ff","b0800f","3bd9eb",
+    "ef3e1b"]
 
 __all__ = ['draw_path', 'plot_clustering_result', 'plot_path_by_segment']
 
 
-def draw_path(df, vin, ign_on_time, 
-              cluster_assignment=None, 
-              save_to=None, show=True,
-              verbose=False):
-    path = utils.filter_to_one_path(df, vin, ign_on_time)
-    if verbose:
-        print('len of lon, lat: ', len(path[0]), len(path[1]))
-    title = utils.get_str_of_trip(vin, ign_on_time)
-    plot_path_by_segment(*path, cluster_assignment=cluster_assignment, 
-                         title=title, save_to=save_to, figsize=(6, 6), show=show)
-
-
 def plot_clustering_result(df, 
+                           cluster_assignment,
                            figsize=(9, 12), 
                            title=None,
                            save_to=None,
@@ -48,15 +45,17 @@ def plot_clustering_result(df,
 
     n_data, n_col = df.shape
     colnames = df.columns
-    cluster_assignment = df.index
+
+    if cluster_assignment is None:
+        cluster_assignment = n_data * [0]
     cluster_ids = np.unique(cluster_assignment)
     n_cluster = cluster_ids.shape[0]
+    assert n_data == len(cluster_assignment)
+    assert len(colnames) == n_col
+
     # print('#time={}, #col={}, #cluster={}'
     #       .format(n_data, n_col, n_cluster))
     # print(cluster_ids)
-
-    assert n_data == cluster_assignment.shape[0]
-    assert len(colnames) == n_col
 
     # define subplot
     f, ax = plt.subplots(n_col + 1, 1, 
@@ -142,8 +141,22 @@ def plot_clustering_result(df,
         plt.savefig(save_to)
     if show:
         plt.show()
-    plt.close('all')
+    plt.close()
 
+
+def draw_path(df, vin, ign_on_time, 
+              save_to=None, show=True,
+              verbose=False):
+    longitute, latitude = utils.filter_to_one_path(df, vin, ign_on_time)
+    if verbose:
+        print('len of lon, lat: ', len(longitute), len(latitude))
+    title = utils.get_str_of_trip(vin, ign_on_time)
+    plot_path_by_segment(longitute, 
+                         latitude,
+                         title=title, 
+                         save_to=save_to, 
+                         figsize=(6, 6), 
+                         show=show)
 
 
 def plot_path_by_segment(longitude, latitude, 
@@ -175,8 +188,8 @@ def plot_path_by_segment(longitude, latitude,
     colors = [palette[int(c)] for c in cluster_assignment]
 
     for start, stop, color in zip(xy[:-1], 
-                                          xy[1:], 
-                                          colors[1:]):    
+                                  xy[1:], 
+                                  colors[1:]):    
         seg_x, seg_y = zip(start, stop)
         ax.plot(seg_x, seg_y, color=color, marker='o', markersize=3)
     
@@ -199,8 +212,7 @@ def plot_path_by_segment(longitude, latitude,
             Line2D([0], [0], color=palette[int(cid)], lw=4) 
             for cid in cluster_ids]
         legend_labels = [str(cid) for cid in cluster_ids]
-        ax.legend(legend_lines, legend_labels, 
-            loc="upper center", ncol=1, shadow=True)
+        ax.legend(legend_lines, legend_labels, ncol=1, shadow=True) #loc="upper center", 
     
     # set title
     if title is not None:
@@ -212,4 +224,4 @@ def plot_path_by_segment(longitude, latitude,
         plt.savefig(save_to)
     if show:
         plt.show()
-    plt.close('all')
+    plt.close()
