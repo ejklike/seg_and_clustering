@@ -137,12 +137,14 @@ class TICC:
                 if self.verbose:
                     print("UPDATED THE OLD COVARIANCE")
 
-                #########################################
+                ##########################################
                 # E-step: Assign points to clusters --> P
-                #########################################
+                ##########################################
 
                 cluster_assignment = self.predict_clusters()
                 new_P_dict = self.get_P_dict(cluster_assignment)
+
+                # adjust empty clusters
 
                 before_empty_cluster_assign = cluster_assignment.copy()
 
@@ -316,14 +318,13 @@ class TICC:
             test_data = self.trained_model['D_train']
 
         # SMOOTHENING
-        lle_all_points_clusters = \
-            self.smoothen_clusters(
-                test_data,
-                self.trained_model['theta_dict'],
-                self.trained_model['mu_dict'])
+        LLE_given_theta = \
+            self.smoothen_clusters(test_data,
+                                   self.trained_model['theta_dict'],
+                                   self.trained_model['mu_dict'])
 
         # Update cluster points - using NEW smoothening
-        cluster_assignment = updateClusters(lle_all_points_clusters, beta=self.bt)
+        cluster_assignment = updateClusters(LLE_given_theta, beta=self.bt)
         return cluster_assignment
 
 
@@ -337,10 +338,12 @@ class TICC:
         # For each point compute the LLE
         if self.verbose:
             print("beginning the smoothening ALGORITHM")
-        t_length = self.nrow - self.w + 1
-        assert len(D_train) == t_length
-        LLE_given_theta = np.zeros([t_length, self.K])
-        for t in range(t_length):
+        
+        T = self.nrow - self.w + 1
+        assert len(D_train) == T
+
+        LLE_given_theta = np.zeros([T, self.K])
+        for t in range(T):
             if t + self.w - 1 < D_train.shape[0]:
                 for k in range(self.K):
                     mu_k = mu_dict[k]
@@ -350,5 +353,4 @@ class TICC:
                     X2 = (D_train[t, :] - mu_k).reshape([self.probSize, 1])
                     lle = np.dot(X2.T, np.dot(theta_k, X2)) - log_det_theta_k
                     LLE_given_theta[t, k] = lle
-
         return LLE_given_theta

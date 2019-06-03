@@ -43,7 +43,7 @@ def hex_to_rgb(value):
     return out
 
 
-def updateClusters(LLE_node_vals, beta=1):
+def updateClusters(LLE, beta=1):
     """
     Takes in LLE_node_vals matrix and computes the path that minimizes
     the total cost over the path
@@ -51,36 +51,26 @@ def updateClusters(LLE_node_vals, beta=1):
 
     Note: switch penalty (=beta) > 0
     """
-    (T, num_clusters) = LLE_node_vals.shape
-    future_cost_vals = np.zeros(LLE_node_vals.shape)
+    T, K = LLE.shape
 
     # compute future costs
-    for i in range(T-2, -1, -1):
-        j = i+1
-        indicator = np.zeros(num_clusters)
-        future_costs = future_cost_vals[j, :]
-        lle_vals = LLE_node_vals[j, :]
-        for cluster in range(num_clusters):
-            total_vals = future_costs + lle_vals + beta
-            total_vals[cluster] -= beta
-            future_cost_vals[i, cluster] = np.min(total_vals)
+    FutureCost = np.zeros(LLE.shape)
+    for t in range(T-2, -1, -1): # for t in [T-2, 0]
+        for k in range(K):
+            total_cost = FutureCost[t+1, :] + LLE[t+1, :] + beta
+            total_cost[k] -= beta # no switching, no penalty.
+            FutureCost[t, k] = np.min(total_cost)
 
     # compute the best path
     path = np.zeros(T)
-
-    # the first location
-    curr_location = np.argmin(future_cost_vals[0, :] + LLE_node_vals[0, :])
-    path[0] = curr_location
-
+    # the first location (no switching)
+    path[0] = np.argmin(FutureCost[0, :] + LLE[0, :])
     # compute the path
-    for i in range(T-1):
-        j = i+1
-        future_costs = future_cost_vals[j, :]
-        lle_vals = LLE_node_vals[j, :]
-        total_vals = future_costs + lle_vals + beta
-        total_vals[int(path[i])] -= beta
-
-        path[i+1] = np.argmin(total_vals)
+    for t in range(T-1):
+        prev_location = int(path[t])
+        total_cost = FutureCost[t+1, :] + LLE[t+1, :] + beta
+        total_cost[prev_location] -= beta
+        path[t+1] = np.argmin(total_cost)
 
     # return the computed path
     return path
