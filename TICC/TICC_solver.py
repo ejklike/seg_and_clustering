@@ -75,11 +75,11 @@ class TICC:
         self.str_NULL = str_NULL
 
         # Get data into proper format
-        nrow, self.ncol = input_data.shape
+        self.nrow, self.ncol = input_data.shape
         self.probSize = self.w * self.ncol
 
         # Train test split
-        training_indices = np.arange(nrow - self.w + 1)
+        training_indices = np.arange(self.nrow - self.w + 1)
 
         # Stack the training data
         if self.w == 1:
@@ -128,6 +128,7 @@ class TICC:
                 # based on self.trained model, predict cluster points
                 self.trained_model = {
                     'S_est_dict': S_est_dict,
+                    'theta_dict': theta_dict,
                     'mu_dict': mu_dict,
                     'D_train': D_train}
 
@@ -201,7 +202,7 @@ class TICC:
         # return
         if self.compute_BIC:
             bic = computeBIC(self.K, 
-                             nrow, 
+                             self.nrow, 
                              cluster_assignment, 
                              theta_dict,
                              S_dict)
@@ -318,7 +319,7 @@ class TICC:
         lle_all_points_clusters = \
             self.smoothen_clusters(
                 test_data,
-                self.trained_model['S_est_dict'],
+                self.trained_model['theta_dict'],
                 self.trained_model['mu_dict'])
 
         # Update cluster points - using NEW smoothening
@@ -326,33 +327,28 @@ class TICC:
         return cluster_assignment
 
 
-    def smoothen_clusters(self, 
-                          D_train,
-                          S_est_dict,
-                          mu_dict):
-        inv_cov_dict = {}  # cluster to inv_cov
-        log_det_dict = {}  # cluster to log_det
-        probSize = self.w * self.ncol
+    def smoothen_clusters(self, D_train, theta_dict, mu_dict):
+        log_det_theta_dict = {}  # cluster to log_det
         for k in range(self.K):
-            cov_matrix = S_est_dict[k]
-            inv_cov_matrix = np.linalg.inv(cov_matrix)
-            log_det_cov = np.log(np.linalg.det(cov_matrix))  # log(det(sigma2|1))
-            inv_cov_dict[k] = inv_cov_matrix
-            log_det_dict[k] = log_det_cov
+            theta_k = theta_dict[k]
+            log_det_theta_k = np.log(np.linalg.det(theta_k))  # log(det(sigma^-2))
+            log_det_theta_dict[k] = log_det_theta_k
+
         # For each point compute the LLE
         if self.verbose:
             print("beginning the smoothening ALGORITHM")
-        LLE_all_points_clusters = \
-            np.zeros([len(D_train), self.K])
-        for point in range(len(D_train)):
-            if point + self.w - 1 < D_train.shape[0]:
+        t_length = self.nrow - self.w + 1
+        assert len(D_train) == t_length
+        LLE_given_theta = np.zeros([t_length, self.K])
+        for t in range(t_length):
+            if t + self.w - 1 < D_train.shape[0]:
                 for k in range(self.K):
-                    empirical_mean = mu_dict[k]
-                    x = D_train[point, :] - empirical_mean
-                    inv_cov_matrix = inv_cov_dict[k]
-                    log_det_cov = log_det_dict[k]
-                    lle = np.dot(x.reshape([1, probSize]),
-                                 np.dot(inv_cov_matrix, x.reshape([probSize, 1]))) + log_det_cov
-                    LLE_all_points_clusters[point, k] = lle
+                    mu_k = mu_dict[k]
+                    theta_k = theta_dict[k]
+                    log_det_theta_k = log_det_theta_dict[k]
+                    
+                    X2 = (D_train[t, :] - mu_k).reshape([self.probSize, 1])
+                    lle = np.dot(X2.T, np.dot(theta_k, X2)) - log_det_theta_k
+                    LLE_given_theta[t, k] = lle
 
-        return LLE_all_points_clusters
+        return LLE_given_theta
