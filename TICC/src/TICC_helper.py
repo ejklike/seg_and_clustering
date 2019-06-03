@@ -25,14 +25,14 @@ def getTrainTestSplit(m, num_blocks, num_stacked):
 
 
 def upperToFull(a, eps=0):
-        ind = (a < eps) & (a > -eps)
-        a[ind] = 0
-        n = int((-1 + np.sqrt(1 + 8*a.shape[0]))/2)
-        A = np.zeros([n, n])
-        A[np.triu_indices(n)] = a
-        temp = A.diagonal()
-        A = np.asarray((A + A.T) - np.diag(temp))
-        return A
+    ind = (a < eps) & (a > -eps)
+    a[ind] = 0
+    n = int((-1 + np.sqrt(1 + 8*a.shape[0]))/2)
+    A = np.zeros([n, n])
+    A[np.triu_indices(n)] = a
+    temp = A.diagonal()
+    A = np.asarray((A + A.T) - np.diag(temp))
+    return A
 
 
 def hex_to_rgb(value):
@@ -43,13 +43,13 @@ def hex_to_rgb(value):
     return out
 
 
-def updateClusters(LLE_node_vals, switch_penalty=1):
+def updateClusters(LLE_node_vals, beta=1):
     """
     Takes in LLE_node_vals matrix and computes the path that minimizes
     the total cost over the path
     Note the LLE's are negative of the true LLE's actually!!!!!
 
-    Note: switch penalty > 0
+    Note: switch penalty (=beta) > 0
     """
     (T, num_clusters) = LLE_node_vals.shape
     future_cost_vals = np.zeros(LLE_node_vals.shape)
@@ -61,8 +61,8 @@ def updateClusters(LLE_node_vals, switch_penalty=1):
         future_costs = future_cost_vals[j, :]
         lle_vals = LLE_node_vals[j, :]
         for cluster in range(num_clusters):
-            total_vals = future_costs + lle_vals + switch_penalty
-            total_vals[cluster] -= switch_penalty
+            total_vals = future_costs + lle_vals + beta
+            total_vals[cluster] -= beta
             future_cost_vals[i, cluster] = np.min(total_vals)
 
     # compute the best path
@@ -77,8 +77,8 @@ def updateClusters(LLE_node_vals, switch_penalty=1):
         j = i+1
         future_costs = future_cost_vals[j, :]
         lle_vals = LLE_node_vals[j, :]
-        total_vals = future_costs + lle_vals + switch_penalty
-        total_vals[int(path[i])] -= switch_penalty
+        total_vals = future_costs + lle_vals + beta
+        total_vals[int(path[i])] -= beta
 
         path[i+1] = np.argmin(total_vals)
 
@@ -178,7 +178,7 @@ def computeF1_macro(confusion_matrix, matching, num_clusters):
     F1_score /= num_clusters
     return F1_score
 
-def computeBIC(K, T, clustered_points, inverse_covariances, empirical_covariances):
+def computeBIC(K, T, clustered_points, inverse_covariances, empirical_covariance):
     '''
     empirical covariance and inverse_covariance should be dicts
     K is num clusters
@@ -189,7 +189,7 @@ def computeBIC(K, T, clustered_points, inverse_covariances, empirical_covariance
     threshold = 2e-5
     clusterParams = {}
     for cluster, clusterInverse in inverse_covariances.items():
-        mod_lle += np.log(np.linalg.det(clusterInverse)) - np.trace(np.dot(empirical_covariances[cluster], clusterInverse))
+        mod_lle += np.log(np.linalg.det(clusterInverse)) - np.trace(np.dot(empirical_covariance[cluster], clusterInverse))
         clusterParams[cluster] = np.sum(np.abs(clusterInverse) > threshold)
     curr_val = -1
     non_zero_params = 0

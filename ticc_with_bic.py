@@ -14,11 +14,11 @@ For each trip of the input vin,
 
 Example
 -------
-python ticc_with_bic.py 5NMS33AD0KH034994 1
-python ticc_with_bic.py 5NMS33AD6KH026656 1
+python ticc_with_bic.py 5NMS33AD0KH034994 
+python ticc_with_bic.py 5NMS33AD6KH026656 
 -------
-python ticc_with_bic.py 5NMS53AD9KH003365 1
-python ticc_with_bic.py 5NMS5CAA5KH018550 1
+python ticc_with_bic.py 5NMS53AD9KH003365 
+python ticc_with_bic.py 5NMS5CAA5KH018550 --verbose --min_nc 3 --max_nc 20 --maxiter 10 --ws 1
 """
 
 import argparse
@@ -37,6 +37,7 @@ from TICC.TICC_solver import TICC
 
 import utils
 from viz_segment import (plot_path_by_segment, 
+                         plot_path_sequence,
                          plot_clustering_result)
 # from betweeness_centrality import betweeness_centrality_wrapper
 
@@ -214,7 +215,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--maxiter', 
         type=int, 
-        default=10,
+        default=100,
         help='maxiter')
     parser.add_argument(
         '--threshold', 
@@ -325,9 +326,10 @@ if __name__ == '__main__':
             
             ### if: solution is already obtained ==> load solution
             if is_solution_found:
-                print('> Load solution ...')
+                print('> Load solution ...', end='')
                 number_of_clusters, bic, cluster_MRFs, cluster_assignment = \
                     utils.load_solution(solution_path)
+                print('num_cluster={}'.format(number_of_clusters))
             ### else: no solution exist ==> loop for all number of cluster sizes
             else:
                 # ### prepare data
@@ -373,6 +375,9 @@ if __name__ == '__main__':
             # check it is already visualized or not
             prefix_string_for_viz = \
                 prefix_string + 'nC=' + str(number_of_clusters)
+            # prefix_string_for_viz_seq = \
+            #     prefix_string + 'nC=' + str(number_of_clusters) + '_seq/'
+            # utils.maybe_exist(prefix_string_for_viz_seq)
 
         # draw png files
         if not is_signal_visualized:
@@ -397,31 +402,47 @@ if __name__ == '__main__':
 
             if number_of_clusters > 0.:
                 xy_path = prefix_string_for_viz + '_path.png'
+                # xy_t_path = prefix_string_for_viz_seq + 'path(t={}).png'
+                
             else:
                 xy_path = prefix_string_for_viz + '(no_solution)_path.png'
+                # xy_t_path = prefix_string_for_viz_seq + 'path(t={}).png'
             
+            # n_row = len(longitude)
+            zero_idx = [i for i in range(n_row) if longitude[i] == 0 and latitude[i] == 0]
+            longitude = np.delete(longitude, zero_idx)
+            latitude = np.delete(latitude, zero_idx)
+            cluster_assignment = np.delete(cluster_assignment, zero_idx)
+
             plot_path_by_segment(longitude, 
                                  latitude, 
                                  cluster_assignment=cluster_assignment, 
                                  title=trip_str, 
                                  save_to=xy_path, 
                                  show=False)
+            # print('>>>>>> Generate path "sequence" visualization png files ...')
+            # plot_path_sequence(longitude, 
+            #                    latitude, 
+            #                    cluster_assignment=cluster_assignment, 
+            #                    title=trip_str, 
+            #                    save_to=prefix_string_for_viz + '_path_animated.gif')
 
-            zero_idx = [i for i in range(n_row) if longitude[i] == 0 and latitude[i] == 0]
-            if len(zero_idx) > 0:
-                print('>>>>>> Exist zero latitude and longitute points: #={}'.format(len(zero_idx)))
-                if number_of_clusters > 0.:
-                    xy_nonzero_path = prefix_string_for_viz + '_(nonzero)path.png'
-                else:
-                    xy_nonzero_path = prefix_string_for_viz + '(no_solution)_(nonzero)path.png'
 
-                print('>>>>>> Generate path (nonzero) visualization png file ...')
-                plot_path_by_segment(np.delete(longitude, zero_idx), 
-                                     np.delete(latitude, zero_idx), 
-                                     cluster_assignment=np.delete(cluster_assignment, zero_idx), 
-                                     title=trip_str, 
-                                     save_to=xy_nonzero_path, 
-                                     show=False)
+            # zero_idx = [i for i in range(n_row) if longitude[i] == 0 and latitude[i] == 0]
+            # if len(zero_idx) > 0:
+            #     print('>>>>>> Exist zero latitude and longitute points: #={}'.format(len(zero_idx)))
+            #     if number_of_clusters > 0.:
+            #         xy_nonzero_path = prefix_string_for_viz + '_(nonzero)path.png'
+            #     else:
+            #         xy_nonzero_path = prefix_string_for_viz + '(no_solution)_(nonzero)path.png'
+
+            #     print('>>>>>> Generate path (nonzero) visualization png file ...')
+            #     plot_path_by_segment(np.delete(longitude, zero_idx), 
+            #                          np.delete(latitude, zero_idx), 
+            #                          cluster_assignment=np.delete(cluster_assignment, zero_idx), 
+            #                          title=trip_str, 
+            #                          save_to=xy_nonzero_path, 
+            #                          show=False)
 
         if require_data_and_solution:
             del df_row_filtered, df_for_modeling, data_for_modeling

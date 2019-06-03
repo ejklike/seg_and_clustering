@@ -14,7 +14,7 @@ class ADMMSolver:
         self.numBlocks = num_stacked
         self.sizeBlocks = size_blocks
         probSize = num_stacked*size_blocks
-        self.length = int(probSize*(probSize+1)/2)
+        self.length = int(probSize*(probSize+1)/2) # upper tri mat
         self.x = numpy.zeros(self.length)
         self.z = numpy.zeros(self.length)
         self.u = numpy.zeros(self.length)
@@ -115,7 +115,6 @@ class ADMMSolver:
 
     #solve
     def __call__(self, maxIters, eps_abs, eps_rel, verbose):
-        num_iterations = 0
         self.status = 'Incomplete: max iterations reached'
         for i in range(maxIters):
             z_old = numpy.copy(self.z)
@@ -123,21 +122,22 @@ class ADMMSolver:
             self.ADMM_z()
             self.ADMM_u()
             if i != 0:
-                stop, res_pri, e_pri, res_dual, e_dual = \
-                    self.CheckConvergence(z_old, 
-                                          eps_abs, 
-                                          eps_rel, 
-                                          verbose)
+                # stop, res_pri, e_pri, res_dual, e_dual = \
+                stop, *_ = self.CheckConvergence(z_old, 
+                                                 eps_abs, 
+                                                 eps_rel, 
+                                                 verbose)
                 if stop:
                     self.status = 'Optimal'
                     break
-                
-                if self.rho_update_func:
-                    new_rho = rho_update_func(self.rho, res_pri, e_pri, res_dual, e_dual)
-                else:
-                    new_rho = self.rho
-                scale = self.rho / new_rho
-                self.u = scale*self.u
+
+                # if self.rho_update_func:
+                #     new_rho = self.rho_update_func(
+                #         self.rho, res_pri, e_pri, res_dual, e_dual)
+                # else:
+                #     new_rho = self.rho
+                # scale = self.rho / new_rho
+                # self.u = scale * self.u
             
             if verbose:
                 # Debugging information prints current iteration #

@@ -10,7 +10,7 @@ from sklearn.cluster import KMeans
 import pandas as pd
 from multiprocessing import Pool
 
-from .src.TICC_helper import *
+from .src.TICC_helper import (upperToFull, computeBIC, updateClusters)
 from .src.admm_solver import ADMMSolver
 
 
@@ -30,10 +30,11 @@ class TICC:
             - prefix_string: output directory if necessary
             - cluster_reassignment: number of points to reassign to a 0 cluster
         """
-        self.window_size = window_size
-        self.number_of_clusters = number_of_clusters
-        self.lambda_parameter = lambda_parameter
-        self.switch_penalty = beta
+        self.w = window_size
+        self.K = number_of_clusters
+        self.ld = lambda_parameter
+        self.bt = beta
+
         self.maxIters = maxIters
         self.threshold = threshold
         self.write_out_file = write_out_file
@@ -41,11 +42,23 @@ class TICC:
         self.num_proc = num_proc
         self.compute_BIC = compute_BIC
         self.cluster_reassignment = cluster_reassignment
-        self.num_blocks = self.window_size + 1
         self.verbose = verbose
         pd.set_option('display.max_columns', 500)
         np.set_printoptions(formatter={'float': lambda x: "{0:0.4f}".format(x)})
         np.random.seed(102)
+
+    def get_P_dict(self, cluster_assignment):
+        """
+        args: cluster_assignment list
+        return: {cluster_number: [point indices]}
+        """
+        # {cluster: [point indices]}
+        cluster_indices_dict = collections.defaultdict(list)  
+        for k in range(self.K):
+            cluster_indices_dict[k] = \
+                [i for i, c in enumerate(cluster_assignment) 
+                 if cluster_assignment[i]==k]
+        return cluster_indices_dict
 
     def fit(self, input_data):
         """
@@ -62,33 +75,30 @@ class TICC:
         self.str_NULL = str_NULL
 
         # Get data into proper format
-        nrow, ncol = input_data.shape
+        nrow, self.ncol = input_data.shape
+        self.probSize = self.w * self.ncol
 
         # Train test split
-        training_indices = np.arange(nrow - self.window_size + 1)
+        training_indices = np.arange(nrow - self.w + 1)
 
         # Stack the training data
-        if self.window_size == 1:
+        if self.w == 1:
             D_train = input_data
-        if self.window_size == 2:
-            D_train = np.concatenate([input_data[:-1], input_data[1:]], 
-                                     axis=1)
+        if self.w == 2:
+            D_train = np.concatenate([input_data[:-1], input_data[1:]], axis=1)
 
         # Initialization
         # Gaussian Mixture
-        gmm = mixture.GaussianMixture(n_components=self.number_of_clusters, 
-                                      covariance_type="full")
-        gmm.fit(D_train)
+        gmm = mixture.GaussianMixture(n_components=self.K, 
+                                      covariance_type="full").fit(D_train)
         cluster_assignment = gmm.predict(D_train)
 
-        train_cluster_inverse = {}
-        log_det_values = {}  # log dets of the thetas
-        computed_covariance = {}
-        cluster_mean_info = {}
-        cluster_mean_stacked_info = {}
+        theta_dict = {}
+        S_est_dict = {}
+        mu_dict = {}
+        S_dict = {}
+        
         old_cluster_assignment = None  # points from last iteration
-
-        empirical_covariances = {}
 
         # PERFORM TRAINING ITERATIONS
         # print('start multi-threading')
@@ -97,87 +107,77 @@ class TICC:
             for iters in range(self.maxIters):
                 if self.verbose:
                     print("\n\n\nITERATION ###", iters)
-                # Get the train and test points
-                train_clusters_arr = collections.defaultdict(list)  # {cluster: [point indices]}
-                for point, cluster_num in enumerate(cluster_assignment): # idx, gmm_labels
-                    train_clusters_arr[cluster_num].append(point)
 
-                len_cluster_dict = Counter(cluster_assignment)
+                P_dict = self.get_P_dict(cluster_assignment)
 
-                # train_clusters holds the indices in complete_D_train
-                # for each of the clusters
-                opt_res = self.train_clusters(cluster_mean_info, 
-                                              cluster_mean_stacked_info, 
-                                              D_train,
-                                              empirical_covariances, 
-                                              len_cluster_dict, 
-                                              ncol, 
-                                              pool,
-                                              train_clusters_arr)
+                #############################################
+                # M-step: Update cluster parameters --> theta
+                #############################################
 
-                self.optimize_clusters(computed_covariance, 
-                                       len_cluster_dict, 
-                                       log_det_values, 
-                                       opt_res,
-                                       train_cluster_inverse)
+                # calculate theta(inv_upper_cov), emp_cov, emp_mean
+                upper_theta_dict = self.train_clusters(
+                    D_train, mu_dict, S_dict, P_dict, pool)
+
+                # calculate cov and its inverse
+                self.optimize_clusters(upper_theta_dict, theta_dict, S_est_dict)
+
+                if self.verbose:
+                    for k in range(self.K):
+                        print("length of the cluster ", k, "--->", len(P_dict[k]))
+
+                # based on self.trained model, predict cluster points
+                self.trained_model = {
+                    'S_est_dict': S_est_dict,
+                    'mu_dict': mu_dict,
+                    'D_train': D_train}
 
                 # update old computed covariance
-                old_computed_covariance = computed_covariance
+                old_S_est_dict = S_est_dict
                 if self.verbose:
                     print("UPDATED THE OLD COVARIANCE")
 
-                # based on self.trained model, predict cluster points
-                self.trained_model = {'cluster_mean_info': cluster_mean_info,
-                                      'computed_covariance': computed_covariance,
-                                      'cluster_mean_stacked_info': cluster_mean_stacked_info,
-                                      'D_train': D_train,
-                                      'time_series_col_size': ncol}
+                #########################################
+                # E-step: Assign points to clusters --> P
+                #########################################
+
                 cluster_assignment = self.predict_clusters()
-
-                # recalculate lengths
-                new_train_clusters = collections.defaultdict(list) # {cluster: [point indices]}
-                for point, cluster in enumerate(cluster_assignment):
-                    new_train_clusters[cluster].append(point)
-
-                len_new_train_clusters = {k: len(new_train_clusters[k]) for k in range(self.number_of_clusters)}
+                new_P_dict = self.get_P_dict(cluster_assignment)
 
                 before_empty_cluster_assign = cluster_assignment.copy()
 
                 if iters != 0:
-                    cluster_norms = [(np.linalg.norm(old_computed_covariance[self.number_of_clusters, i]), i) for i in
-                                    range(self.number_of_clusters)]
+                    cluster_norms = \
+                        [(np.linalg.norm(old_S_est_dict[i]), i) for i in range(self.K)]
                     norms_sorted = sorted(cluster_norms, reverse=True)
                     # clusters that are not 0 as sorted by norm
-                    valid_clusters = [cp[1] for cp in norms_sorted if len_new_train_clusters[cp[1]] != 0]
+                    valid_clusters = \
+                        [cp[1] for cp in norms_sorted if len(new_P_dict[cp[1]]) != 0]
 
                     # Add a point to the empty clusters
                     # assuming more non empty clusters than empty ones
                     counter = 0
-                    for cluster_num in range(self.number_of_clusters):
-                        if len_new_train_clusters[cluster_num] == 0:
-                            cluster_selected = valid_clusters[counter]  # a cluster that is not len 0
+                    for k in range(self.K):
+                        if len(new_P_dict[k]) == 0:
+                            k_selected = valid_clusters[counter]  # a cluster that is not len 0
                             counter = (counter + 1) % len(valid_clusters)
                             if self.verbose:
-                                print("cluster that is zero is:", cluster_num, "selected cluster instead is:", cluster_selected)
+                                print("cluster that is zero is:", k, 
+                                      "selected cluster instead is:", k_selected)
                             start_point = np.random.choice(
-                                new_train_clusters[cluster_selected])  # random point number from that cluster
+                                new_P_dict[k_selected])  # random point number from that cluster
                             for i in range(0, self.cluster_reassignment):
                                 # put cluster_reassignment points from point_num in this cluster
                                 point_to_move = start_point + i
                                 if point_to_move >= len(cluster_assignment):
                                     break
-                                cluster_assignment[point_to_move] = cluster_num
-                                computed_covariance[self.number_of_clusters, cluster_num] = old_computed_covariance[
-                                    self.number_of_clusters, cluster_selected]
-                                cluster_mean_stacked_info[self.number_of_clusters, cluster_num] = D_train[
-                                                                                                point_to_move, :]
-                                cluster_mean_info[self.number_of_clusters, cluster_num] \
-                                    = D_train[point_to_move, :][
-                                    (self.window_size - 1) * ncol:self.window_size * ncol]
+                                cluster_assignment[point_to_move] = k
+                                theta_dict[k] = old_S_est_dict[k_selected]
+                                mu_dict[k] = D_train[point_to_move, :]
 
-                for cluster_num in range(self.number_of_clusters):
-                    if self.verbose:
-                        print("length of cluster #", cluster_num, "-------->", sum([x == cluster_num for x in clustered_points]))
+                if self.verbose:
+                    for k in range(self.K):
+                        print("length of cluster #", k, "-------->", 
+                              sum([x == k for x in cluster_assignment]))
 
                 self.write_plot(cluster_assignment, str_NULL, training_indices, iters)
 
@@ -191,130 +191,88 @@ class TICC:
             if pool is not None:
                 pool.close()
                 pool.join()
-            cluster_assignment, train_cluster_inverse, bic = None, None, -1
-            return cluster_assignment, train_cluster_inverse, bic
+            cluster_assignment, theta_dict, bic = None, None, -1
+            return cluster_assignment, theta_dict, bic
             
         if pool is not None:
             pool.close()
             pool.join()
 
+        # return
         if self.compute_BIC:
-            bic = computeBIC(self.number_of_clusters, 
+            bic = computeBIC(self.K, 
                              nrow, 
                              cluster_assignment, 
-                             train_cluster_inverse,
-                             empirical_covariances)
-            return cluster_assignment, train_cluster_inverse, bic
-
-        return cluster_assignment, train_cluster_inverse
+                             theta_dict,
+                             S_dict)
+            return cluster_assignment, theta_dict, bic
+        else:
+            return cluster_assignment, theta_dict
 
 
     def write_plot(self, cluster_assignment, str_NULL, training_indices, iters):
         # Save a figure of segmentation
         plt.figure()
         plt.plot(cluster_assignment, color="r")  # ,marker = ".",s =100)
-        plt.ylim((-0.5, self.number_of_clusters + 0.5))
+        plt.ylim((-0.5, self.K + 0.5))
         plt.xlabel('time index')
         plt.ylabel('cluster label')
-        fname_fig = (str_NULL + "TRAINING_EM_" + 
-            # "n_cluster=" + str(self.number_of_clusters) + 
-            # "lam_sparse=" + str(self.lambda_parameter) + 
-            # "switch_penalty = " + str(self.switch_penalty) + 
-            "iter={:000}.jpg".format(iters))
+        fname_fig = (str_NULL + "TRAINING_EM_iter={:000}.jpg".format(iters))
         if self.verbose:
             print(fname_fig)
         if self.write_out_file: plt.savefig(fname_fig)
-        plt.close("all")
+        plt.close()
         if self.verbose:
             print("Done writing the figure")
 
 
-    def smoothen_clusters(self, cluster_mean_info, computed_covariance,
-                          cluster_mean_stacked_info, D_train, n):
-        cluster_assignment_len = len(D_train)
-        inv_cov_dict = {}  # cluster to inv_cov
-        log_det_dict = {}  # cluster to log_det
-        for cluster in range(self.number_of_clusters):
-            cov_matrix = computed_covariance[self.number_of_clusters, cluster][0:(self.num_blocks - 1) * n,
-                         0:(self.num_blocks - 1) * n]
-            inv_cov_matrix = np.linalg.inv(cov_matrix)
-            log_det_cov = np.log(np.linalg.det(cov_matrix))  # log(det(sigma2|1))
-            inv_cov_dict[cluster] = inv_cov_matrix
-            log_det_dict[cluster] = log_det_cov
-        # For each point compute the LLE
-        if self.verbose:
-            print("beginning the smoothening ALGORITHM")
-        LLE_all_points_clusters = np.zeros([cluster_assignment_len, self.number_of_clusters])
-        for point in range(cluster_assignment_len):
-            if point + self.window_size - 1 < D_train.shape[0]:
-                for cluster in range(self.number_of_clusters):
-                    cluster_mean = cluster_mean_info[self.number_of_clusters, cluster]
-                    cluster_mean_stacked = cluster_mean_stacked_info[self.number_of_clusters, cluster]
-                    x = D_train[point, :] - cluster_mean_stacked[0:(self.num_blocks - 1) * n]
-                    inv_cov_matrix = inv_cov_dict[cluster]
-                    log_det_cov = log_det_dict[cluster]
-                    lle = np.dot(x.reshape([1, (self.num_blocks - 1) * n]),
-                                 np.dot(inv_cov_matrix, x.reshape([n * (self.num_blocks - 1), 1]))) + log_det_cov
-                    LLE_all_points_clusters[point, cluster] = lle
-
-        return LLE_all_points_clusters
-
-
-    def optimize_clusters(self, computed_covariance, len_cluster_dict, log_det_values, optRes, train_cluster_inverse):
-        for cluster in range(self.number_of_clusters):
-            if optRes[cluster] == None:
+    def optimize_clusters(self, upper_theta_dict, theta_dict, S_est_dict):
+        for k in range(self.K):
+            if upper_theta_dict[k] == None:
                 continue
-            val = optRes[cluster].get()
+            # from multiprocessing.pool.ApplyResult to its value
+            upper_theta = upper_theta_dict[k].get()
             if self.verbose:
-                print("OPTIMIZATION for Cluster #", cluster, "DONE!!!")
+                print("OPTIMIZATION for Cluster #", k, "DONE!!!")
             # THIS IS THE SOLUTION
-            S_est = upperToFull(val, 0)
-            X2 = S_est
-            u, _ = np.linalg.eig(S_est)
-            cov_out = np.linalg.inv(X2)
-
-            # Store the log-det, covariance, inverse-covariance, cluster means, stacked means
-            log_det_values[self.number_of_clusters, cluster] = np.log(np.linalg.det(cov_out))
-            computed_covariance[self.number_of_clusters, cluster] = cov_out
-            train_cluster_inverse[cluster] = X2
-        for cluster in range(self.number_of_clusters):
-            if self.verbose:
-                print("length of the cluster ", cluster, "------>", len_cluster_dict[cluster])
+            theta = upperToFull(upper_theta, 0) # full theta (inv covariance)
+            covariance = np.linalg.inv(theta)
+            # Store the covariance, inverse-covariance
+            theta_dict[k] = theta
+            S_est_dict[k] = covariance
 
 
-    def train_clusters(self, 
-                       cluster_mean_info,         # {}
-                       cluster_mean_stacked_info, # {}
-                       D_train,                   # input_data
-                       empirical_covariances,     # {}
-                       len_cluster_dict,          # {cluster: len(point indices)]}
-                       ncol,                         # col_size
-                       pool,                      # multi-threading
-                       train_clusters_arr):       # {cluster: [point indices]}
-        optRes = [None for i in range(self.number_of_clusters)]
-        for cluster in range(self.number_of_clusters):
-            cluster_length = len_cluster_dict[cluster]
-            if cluster_length != 0:
-                indices = train_clusters_arr[cluster]
-                D_train_c = np.zeros([cluster_length, self.window_size * ncol])
-                for i in range(cluster_length):
-                    point = indices[i]
-                    D_train_c[i, :] = D_train[point, :]
-
-                cluster_mean_info[self.number_of_clusters, cluster] = \
-                    np.mean(D_train_c, axis=0)[(self.window_size-1)*ncol:self.window_size*ncol].reshape([1, ncol])
-                cluster_mean_stacked_info[self.number_of_clusters, cluster] = np.mean(D_train, axis=0)
+    def train_clusters(self, D_train, mu_dict, S_dict, P_dict, pool):
+        """
+        args:
+            - lambda
+            - theta
+            - empirical covariance
+            - len(P_k)
+        return:
+            - upper_theta_dict
+        """
+        upper_theta_dict = {k:None for k in range(self.K)}
+        for k in range(self.K):
+            P_k = P_dict[k]
+            if len(P_k) != 0:
+                # training data for this cluster
+                D_train_c = D_train[P_k, :]
+                
                 ##Fit a model - OPTIMIZATION
-                probSize = self.window_size * ncol
-                lamb = np.zeros((probSize, probSize)) + self.lambda_parameter
+                lamb = self.ld * np.ones((self.probSize, self.probSize))
                 S = np.cov(np.transpose(D_train_c))
-                empirical_covariances[cluster] = S
-
                 rho = 1
-                solver = ADMMSolver(lamb, self.window_size, ncol, rho, S)
-                # apply to process pool
-                optRes[cluster] = pool.apply_async(solver, (1000, 1e-6, 1e-6, False,))
-        return optRes
+                solver = ADMMSolver(lamb, self.w, self.ncol, rho, S)
+                # apply to process pool (args: maxIters, eps_abs, eps_rel, verbose)
+                pool_result = pool.apply_async(solver, (1000, 1e-6, 1e-6, False))
+                # # from multiprocessing.pool.ApplyResult to its value
+                # upper_theta_dict[k] = pool_result.get()
+                upper_theta_dict[k] = pool_result
+                # save empirical mean and covariance
+                mu_dict[k] = np.mean(D_train_c, axis=0)
+                S_dict[k] = S
+        return upper_theta_dict
 
 
     def prepare_out_directory(self):
@@ -325,25 +283,26 @@ class TICC:
             except OSError as exc:  # Guard against race condition of path already existing
                 if exc.errno != errno.EEXIST:
                     raise
-
         return str_NULL
 
 
     def log_parameters(self):
         if self.verbose:
-            print("lam_sparse", self.lambda_parameter)
-            print("switch_penalty", self.switch_penalty)
-            print("num_cluster", self.number_of_clusters)
-            print("num stacked", self.window_size)
+            print("lam_sparse", self.ld)
+            print("switch_penalty", self.bt)
+            print("num_cluster", self.K)
+            print("num stacked", self.w)
 
 
-    def predict_clusters(self, test_data = None):
+    def predict_clusters(self, test_data=None):
         '''
-        Given the current trained model, predict clusters.  If the cluster segmentation has not been optimized yet,
+        Given the current trained model, predict clusters.  
+        If the cluster segmentation has not been optimized yet,
         than this will be part of the interative process.
 
         Args:
-            numpy array of data for which to predict clusters.  Columns are dimensions of the data, each row is
+            numpy array of data for which to predict clusters.  
+            Columns are dimensions of the data, each row is
             a different timestamp
 
         Returns:
@@ -356,14 +315,44 @@ class TICC:
             test_data = self.trained_model['D_train']
 
         # SMOOTHENING
-        lle_all_points_clusters = self.smoothen_clusters(self.trained_model['cluster_mean_info'],
-                                                         self.trained_model['computed_covariance'],
-                                                         self.trained_model['cluster_mean_stacked_info'],
-                                                         test_data,
-                                                         self.trained_model['ncol'])
+        lle_all_points_clusters = \
+            self.smoothen_clusters(
+                test_data,
+                self.trained_model['S_est_dict'],
+                self.trained_model['mu_dict'])
 
         # Update cluster points - using NEW smoothening
-        cluster_assignment = updateClusters(lle_all_points_clusters, 
-                                            switch_penalty=self.switch_penalty)
-
+        cluster_assignment = updateClusters(lle_all_points_clusters, beta=self.bt)
         return cluster_assignment
+
+
+    def smoothen_clusters(self, 
+                          D_train,
+                          S_est_dict,
+                          mu_dict):
+        inv_cov_dict = {}  # cluster to inv_cov
+        log_det_dict = {}  # cluster to log_det
+        probSize = self.w * self.ncol
+        for k in range(self.K):
+            cov_matrix = S_est_dict[k]
+            inv_cov_matrix = np.linalg.inv(cov_matrix)
+            log_det_cov = np.log(np.linalg.det(cov_matrix))  # log(det(sigma2|1))
+            inv_cov_dict[k] = inv_cov_matrix
+            log_det_dict[k] = log_det_cov
+        # For each point compute the LLE
+        if self.verbose:
+            print("beginning the smoothening ALGORITHM")
+        LLE_all_points_clusters = \
+            np.zeros([len(D_train), self.K])
+        for point in range(len(D_train)):
+            if point + self.w - 1 < D_train.shape[0]:
+                for k in range(self.K):
+                    empirical_mean = mu_dict[k]
+                    x = D_train[point, :] - empirical_mean
+                    inv_cov_matrix = inv_cov_dict[k]
+                    log_det_cov = log_det_dict[k]
+                    lle = np.dot(x.reshape([1, probSize]),
+                                 np.dot(inv_cov_matrix, x.reshape([probSize, 1]))) + log_det_cov
+                    LLE_all_points_clusters[point, k] = lle
+
+        return LLE_all_points_clusters

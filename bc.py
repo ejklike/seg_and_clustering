@@ -18,6 +18,7 @@ python bc.py 5NMS33AD0KH034994 1
 python bc.py 5NMS33AD6KH026656 1
 -------
 python bc.py 5NMS53AD9KH003365 1
+python bc.py 5NMS5CAA5KH018550 1
 
 """
 
