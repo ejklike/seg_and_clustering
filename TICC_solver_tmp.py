@@ -88,7 +88,7 @@ class TICC:
         cluster_mean_stacked_info = {}
         old_cluster_assignment = None  # points from last iteration
 
-        empirical_covariances = {}
+        empirical_covariance = {}
 
         # PERFORM TRAINING ITERATIONS
         # print('start multi-threading')
@@ -109,7 +109,7 @@ class TICC:
                 opt_res = self.train_clusters(cluster_mean_info, 
                                               cluster_mean_stacked_info, 
                                               D_train,
-                                              empirical_covariances, 
+                                              empirical_covariance, 
                                               len_cluster_dict, 
                                               ncol, 
                                               pool,
@@ -131,7 +131,7 @@ class TICC:
                                       'computed_covariance': computed_covariance,
                                       'cluster_mean_stacked_info': cluster_mean_stacked_info,
                                       'D_train': D_train,
-                                      'time_series_col_size': ncol}
+                                      'ncol': ncol}
                 cluster_assignment = self.predict_clusters()
 
                 # recalculate lengths
@@ -177,7 +177,8 @@ class TICC:
 
                 for cluster_num in range(self.number_of_clusters):
                     if self.verbose:
-                        print("length of cluster #", cluster_num, "-------->", sum([x == cluster_num for x in clustered_points]))
+                        print("length of cluster #", cluster_num, "-------->", 
+                              sum([x == cluster_num for x in cluster_assignment]))
 
                 self.write_plot(cluster_assignment, str_NULL, training_indices, iters)
 
@@ -203,7 +204,7 @@ class TICC:
                              nrow, 
                              cluster_assignment, 
                              train_cluster_inverse,
-                             empirical_covariances)
+                             empirical_covariance)
             return cluster_assignment, train_cluster_inverse, bic
 
         return cluster_assignment, train_cluster_inverse
@@ -286,7 +287,7 @@ class TICC:
                        cluster_mean_info,         # {}
                        cluster_mean_stacked_info, # {}
                        D_train,                   # input_data
-                       empirical_covariances,     # {}
+                       empirical_covariance,     # {}
                        len_cluster_dict,          # {cluster: len(point indices)]}
                        ncol,                         # col_size
                        pool,                      # multi-threading
@@ -303,12 +304,12 @@ class TICC:
 
                 cluster_mean_info[self.number_of_clusters, cluster] = \
                     np.mean(D_train_c, axis=0)[(self.window_size-1)*ncol:self.window_size*ncol].reshape([1, ncol])
-                cluster_mean_stacked_info[self.number_of_clusters, cluster] = np.mean(D_train, axis=0)
+                cluster_mean_stacked_info[self.number_of_clusters, cluster] = np.mean(D_train_c, axis=0)
                 ##Fit a model - OPTIMIZATION
                 probSize = self.window_size * ncol
                 lamb = np.zeros((probSize, probSize)) + self.lambda_parameter
                 S = np.cov(np.transpose(D_train_c))
-                empirical_covariances[cluster] = S
+                empirical_covariance[cluster] = S
 
                 rho = 1
                 solver = ADMMSolver(lamb, self.window_size, ncol, rho, S)
