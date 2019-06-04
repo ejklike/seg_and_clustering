@@ -19,6 +19,11 @@ python ticc_with_bic.py 5NMS33AD6KH026656
 -------
 python ticc_with_bic.py 5NMS53AD9KH003365 
 python ticc_with_bic.py 5NMS5CAA5KH018550 --verbose --min_nc 3 --max_nc 20 --maxiter 10 --ws 1
+
+-------
+
+python ticc_with_bic.py 5NMS5CAA5KH018550 --verbose --min_nc 13 --max_nc 13 --maxiter 10 --ws 1
+python ticc_with_bic.py 5NMS5CAA5KH018550 --verbose --min_nc 8 --max_nc 8 --maxiter 10 --ws 2
 """
 
 import argparse
@@ -40,21 +45,6 @@ from viz_segment import (plot_path_by_segment,
                          plot_path_sequence,
                          plot_clustering_result)
 # from betweeness_centrality import betweeness_centrality_wrapper
-
-
-#####################
-# TICC SETTING
-#####################
-
-lambda_parameter = 5e-3 # sparsity in Toplitz matrix
-beta = 200 # segmentation penalty
-maxIters = 10
-threshold = 2e-5
-write_out_file = True
-num_proc = 4
-
-min_num_cluster = 3
-max_num_cluster = 20
 
 #####################
 # DATA SETTING
@@ -107,7 +97,7 @@ def run_ticc(data_for_modeling, number_of_clusters, prefix_string, args):
     if n_sample_is_insufficient:
         cluster_assignment = None
         cluster_MRFs = None
-        bic = -1
+        bic = -1e10
 
     else:
         ticc = TICC(window_size=args.ws, 
@@ -129,7 +119,7 @@ def run_ticc(data_for_modeling, number_of_clusters, prefix_string, args):
 
 def loop_ticc_modling(data_for_modeling, cmin, cmax, prefix_string):
     best_nc = 0
-    best_bic = -1
+    best_bic = -1e10
     best_cluster_assignment = None
     best_cluster_MRFs = None
 
@@ -352,6 +342,7 @@ if __name__ == '__main__':
                     'cluster_assignment': cluster_assignment,
                     'cluster_MRFs': cluster_MRFs}
                 utils.dump_solution(solution_dict, solution_path)
+            print('> Solution: nC={}, bic={}'.format(number_of_clusters, bic))
 
         ##########################################
         # SAVE DATAFRAME WITH CLUSTERING RESULT

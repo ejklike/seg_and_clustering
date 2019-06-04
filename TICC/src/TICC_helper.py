@@ -1,29 +1,6 @@
 import numpy as np
 
 
-def getTrainTestSplit(m, num_blocks, num_stacked):
-    '''
-    - m: number of observations
-    - num_blocks: window_size + 1 -------unused
-    - num_stacked: window_size
-    Returns:
-    - sorted list of training indices
-    '''
-    # list of training indices
-    training_idx = np.random.choice(
-        m-num_stacked, 
-        size=int((m-num_stacked)), 
-        replace=False)
-    # Ensure that the first and the last few points are in
-    training_idx = list(training_idx)
-    if 0 not in training_idx:
-        training_idx.append(0)
-    if m - num_stacked not in training_idx:
-        training_idx.append(m-num_stacked)
-    training_idx = np.array(training_idx)
-    return sorted(training_idx)
-
-
 def upperToFull(a, eps=0):
     ind = (a < eps) & (a > -eps)
     a[ind] = 0
@@ -33,14 +10,6 @@ def upperToFull(a, eps=0):
     temp = A.diagonal()
     A = np.asarray((A + A.T) - np.diag(temp))
     return A
-
-
-def hex_to_rgb(value):
-    """Return (red, green, blue) for the color given as #rrggbb."""
-    lv = len(value)
-    out = tuple(int(value[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
-    out = tuple([x/256.0 for x in out])
-    return out
 
 
 def updateClusters(LLE, beta=1):
@@ -76,115 +45,40 @@ def updateClusters(LLE, beta=1):
     return path
 
 
-def find_matching(confusion_matrix):
-    """
-    returns the perfect matching
-    """
-    _, n = confusion_matrix.shape
-    path = []
-    for i in range(n):
-        max_val = -1e10
-        max_ind = -1
-        for j in range(n):
-            if j in path:
-                pass
-            else:
-                temp = confusion_matrix[i, j]
-                if temp > max_val:
-                    max_val = temp
-                    max_ind = j
-        path.append(max_ind)
-    return path
-
-
-def computeF1Score_delete(num_cluster, matching_algo, actual_clusters, threshold_algo, save_matrix=False):
-    """
-    computes the F1 scores and returns a list of values
-    """
-    F1_score = np.zeros(num_cluster)
-    for cluster in range(num_cluster):
-        matched_cluster = matching_algo[cluster]
-        true_matrix = actual_clusters[cluster]
-        estimated_matrix = threshold_algo[matched_cluster]
-        if save_matrix: np.savetxt("estimated_matrix_cluster=" + str(
-            cluster)+".csv", estimated_matrix, delimiter=",", fmt="%1.4f")
-        TP = 0
-        TN = 0
-        FP = 0
-        FN = 0
-        for i in range(num_stacked*n):
-            for j in range(num_stacked*n):
-                if estimated_matrix[i, j] == 1 and true_matrix[i, j] != 0:
-                    TP += 1.0
-                elif estimated_matrix[i, j] == 0 and true_matrix[i, j] == 0:
-                    TN += 1.0
-                elif estimated_matrix[i, j] == 1 and true_matrix[i, j] == 0:
-                    FP += 1.0
-                else:
-                    FN += 1.0
-        precision = (TP)/(TP + FP)
-        print("cluster #", cluster)
-        print("TP,TN,FP,FN---------->", (TP, TN, FP, FN))
-        recall = TP/(TP + FN)
-        f1 = (2*precision*recall)/(precision + recall)
-        F1_score[cluster] = f1
-    return F1_score
-
-
-def compute_confusion_matrix(num_clusters, clustered_points_algo, sorted_indices_algo):
-    """
-    computes a confusion matrix and returns it
-    """
-    seg_len = 400
-    true_confusion_matrix = np.zeros([num_clusters, num_clusters])
-    for point in range(len(clustered_points_algo)):
-        cluster = clustered_points_algo[point]
-        num = (int(sorted_indices_algo[point]/seg_len) % num_clusters)
-        true_confusion_matrix[int(num), int(cluster)] += 1
-    return true_confusion_matrix
-
-
-def computeF1_macro(confusion_matrix, matching, num_clusters):
-    """
-    computes the macro F1 score
-    confusion matrix : requres permutation
-    matching according to which matrix must be permuted
-    """
-    # Permute the matrix columns
-    permuted_confusion_matrix = np.zeros([num_clusters, num_clusters])
-    for cluster in range(num_clusters):
-        matched_cluster = matching[cluster]
-        permuted_confusion_matrix[:, cluster] = confusion_matrix[:, matched_cluster]
-# Compute the F1 score for every cluster
-    F1_score = 0
-    for cluster in range(num_clusters):
-        TP = permuted_confusion_matrix[cluster,cluster]
-        FP = np.sum(permuted_confusion_matrix[:,cluster]) - TP
-        FN = np.sum(permuted_confusion_matrix[cluster,:]) - TP
-        precision = TP/(TP + FP)
-        recall = TP/(TP + FN)
-        f1 = stats.hmean([precision,recall])
-        F1_score += f1
-    F1_score /= num_clusters
-    return F1_score
-
-def computeBIC(K, T, clustered_points, inverse_covariances, empirical_covariance):
+def computeBIC(K, T, cluster_assignment, theta_dict, S_dict, threshold=2e-5):
     '''
+    G. Schwarz (1978) proposed the “Bayes information criterion (BIC)”
+    ---
+    BIC = 2 * MLL - d * log(n)
+
+    - MLL: maximum log-likelihood
+    - d  : the number of free parameters to be estimated
+    - n  : the sample size
+
+    ---    
+    When fitting models, it is possible to increase the likelihood 
+    by adding parameters, but doing so may result in overfitting. 
+    The BIC resolves this problem by introducing a penalty term for 
+    the number of parameters in the model. 
+    The penalty term is larger in BIC than in AIC.
+
+    ---
     empirical covariance and inverse_covariance should be dicts
     K is num clusters
     T is num samples
     '''
     mod_lle = 0
+    degree_dict = {}
+    for k in range(K):
+        log_det_theta_k = np.log(np.linalg.det(theta_dict[k]))
+        tr_S_theta_k = np.trace(np.dot(S_dict[k], theta_dict[k]))
+        mod_lle += log_det_theta_k - tr_S_theta_k
+        degree_dict[k] = np.sum(np.abs(theta_dict[k]) > threshold)
     
-    threshold = 2e-5
-    clusterParams = {}
-    for cluster, clusterInverse in inverse_covariances.items():
-        mod_lle += np.log(np.linalg.det(clusterInverse)) - np.trace(np.dot(empirical_covariance[cluster], clusterInverse))
-        clusterParams[cluster] = np.sum(np.abs(clusterInverse) > threshold)
     curr_val = -1
     non_zero_params = 0
-    for val in clustered_points:
-        if val != curr_val:
-            non_zero_params += clusterParams[val]
-            curr_val = val
-    return non_zero_params * np.log(T) - 2*mod_lle
+    for c in cluster_assignment:
+        if c != curr_val:
+            non_zero_params += degree_dict[c]
+            curr_val = c
+    return 2*mod_lle - non_zero_params * np.log(T)

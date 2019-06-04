@@ -6,18 +6,27 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from sklearn import mixture
-from sklearn.cluster import KMeans
 import pandas as pd
 from multiprocessing import Pool
 
-from .src.TICC_helper import (upperToFull, computeBIC, updateClusters)
+from .src.TICC_helper import upperToFull, computeBIC, updateClusters
 from .src.admm_solver import ADMMSolver
 
 
 class TICC:
-    def __init__(self, window_size=10, number_of_clusters=5, lambda_parameter=11e-2,
-                 beta=400, maxIters=1000, threshold=2e-5, write_out_file=False, verbose=True,
-                 prefix_string="", num_proc=1, compute_BIC=False, cluster_reassignment=20):
+    def __init__(self, 
+                 window_size=10, 
+                 number_of_clusters=5, 
+                 lambda_parameter=11e-2,
+                 beta=400, 
+                 maxIters=1000, 
+                 threshold=2e-5, 
+                 write_out_file=False, 
+                 verbose=True,
+                 prefix_string="", 
+                 num_proc=1, 
+                 compute_BIC=False, 
+                 cluster_reassignment=20):
         """
         Parameters:
             - window_size: size of the sliding window
@@ -86,19 +95,26 @@ class TICC:
             D_train = input_data
         if self.w == 2:
             D_train = np.concatenate([input_data[:-1], input_data[1:]], axis=1)
+            # D_train[-1, 8:] = 0.
 
         # Initialization
         # Gaussian Mixture
         gmm = mixture.GaussianMixture(n_components=self.K, 
-                                      covariance_type="full").fit(D_train)
-        cluster_assignment = gmm.predict(D_train)
-
-        theta_dict = {}
-        S_est_dict = {}
-        mu_dict = {}
-        S_dict = {}
-        
+                                      covariance_type="full", random_state=102)
+        cluster_assignment = gmm.fit_predict(D_train)
         old_cluster_assignment = None  # points from last iteration
+
+        # print(cluster_assignment)
+        # P_dict = self.get_P_dict(cluster_assignment)
+        # for k in range(self.K):
+        #     print("length of the cluster ", k, "--->", len(P_dict[k]))
+        # return None
+
+        self.mu_dict = {}
+        self.S_dict = {}
+        self.theta_dict = {}
+        self.log_det_theta_dict = {}
+        self.S_est_dict = {}
 
         # PERFORM TRAINING ITERATIONS
         # print('start multi-threading')
@@ -110,72 +126,65 @@ class TICC:
 
                 P_dict = self.get_P_dict(cluster_assignment)
 
-                #############################################
-                # M-step: Update cluster parameters --> theta
-                #############################################
+                if self.verbose:
+                    print('#############################################')
+                    print('# M-step: Update cluster parameters --> theta')
+                    print('#############################################')
 
                 # calculate theta(inv_upper_cov), emp_cov, emp_mean
-                upper_theta_dict = self.train_clusters(
-                    D_train, mu_dict, S_dict, P_dict, pool)
+                upper_theta_dict = self.train_clusters(D_train, P_dict, pool)
 
-                # calculate cov and its inverse
-                self.optimize_clusters(upper_theta_dict, theta_dict, S_est_dict)
+                # calculate theta and its inverse
+                self.optimize_clusters(upper_theta_dict)
 
                 if self.verbose:
                     for k in range(self.K):
                         print("length of the cluster ", k, "--->", len(P_dict[k]))
 
-                # based on self.trained model, predict cluster points
-                self.trained_model = {
-                    'S_est_dict': S_est_dict,
-                    'theta_dict': theta_dict,
-                    'mu_dict': mu_dict,
-                    'D_train': D_train}
-
-                # update old computed covariance
-                old_S_est_dict = S_est_dict
                 if self.verbose:
-                    print("UPDATED THE OLD COVARIANCE")
+                    print('##########################################')
+                    print('# E-step: Assign points to clusters --> P ')
+                    print('##########################################')
 
-                ##########################################
-                # E-step: Assign points to clusters --> P
-                ##########################################
-
-                cluster_assignment = self.predict_clusters()
+                cluster_assignment = self.predict_clusters(D_train)
                 new_P_dict = self.get_P_dict(cluster_assignment)
 
-                # adjust empty clusters
+                ##########################################
 
-                before_empty_cluster_assign = cluster_assignment.copy()
+                # adjust empty clusters
+                # before_empty_cluster_assign = cluster_assignment.copy()
 
                 if iters != 0:
                     cluster_norms = \
-                        [(np.linalg.norm(old_S_est_dict[i]), i) for i in range(self.K)]
+                        [(np.linalg.norm(self.S_est_dict[k]), k) for k in range(self.K)]
                     norms_sorted = sorted(cluster_norms, reverse=True)
+                    print('cluster_norms', cluster_norms)
+                    print('norms_sorted', norms_sorted)
                     # clusters that are not 0 as sorted by norm
-                    valid_clusters = \
-                        [cp[1] for cp in norms_sorted if len(new_P_dict[cp[1]]) != 0]
+                    valid_clusters = [k for n, k in norms_sorted if len(new_P_dict[k]) != 0]
+                    empty_clusters = [k for k in range(self.K) if len(new_P_dict[k]) == 0]
+                    print('valid_clusters', valid_clusters)
+                    print('empty_clusters', empty_clusters)
 
                     # Add a point to the empty clusters
                     # assuming more non empty clusters than empty ones
                     counter = 0
-                    for k in range(self.K):
-                        if len(new_P_dict[k]) == 0:
-                            k_selected = valid_clusters[counter]  # a cluster that is not len 0
-                            counter = (counter + 1) % len(valid_clusters)
-                            if self.verbose:
-                                print("cluster that is zero is:", k, 
-                                      "selected cluster instead is:", k_selected)
-                            start_point = np.random.choice(
-                                new_P_dict[k_selected])  # random point number from that cluster
-                            for i in range(0, self.cluster_reassignment):
-                                # put cluster_reassignment points from point_num in this cluster
-                                point_to_move = start_point + i
-                                if point_to_move >= len(cluster_assignment):
-                                    break
-                                cluster_assignment[point_to_move] = k
-                                theta_dict[k] = old_S_est_dict[k_selected]
-                                mu_dict[k] = D_train[point_to_move, :]
+                    for k_empty in empty_clusters:
+                        k_selected = valid_clusters[counter]  # a cluster that is not len 0
+                        counter = (counter + 1) % len(valid_clusters)
+                        if self.verbose:
+                            print("cluster that is zero is:", k_empty, 
+                                  "selected cluster instead is:", k_selected)
+                        
+                        # random point number from that cluster
+                        t_start = np.random.choice(new_P_dict[k_selected])
+                        t_end = np.minimum(t_start + self.cluster_reassignment - 1, 
+                                           len(cluster_assignment) - 1)
+                        t_reassignment = np.arange(t_start, t_end + 1)
+                        print(t_reassignment)
+                        cluster_assignment[t_reassignment] = k_empty
+                        self.S_est_dict[k_empty] = self.S_est_dict[k_selected]
+                        self.mu_dict[k_empty] = np.mean(D_train[t_reassignment, :], axis=0)
 
                 if self.verbose:
                     for k in range(self.K):
@@ -188,13 +197,14 @@ class TICC:
                     if self.verbose:
                         print("\n\n\n\nCONVERGED!!! BREAKING EARLY!!!")
                     break
-                old_cluster_assignment = before_empty_cluster_assign
+                # old_cluster_assignment = before_empty_cluster_assign
+                old_cluster_assignment = cluster_assignment.copy()
                 # end of training
         except np.linalg.LinAlgError as err:
             if pool is not None:
                 pool.close()
                 pool.join()
-            cluster_assignment, theta_dict, bic = None, None, -1
+            cluster_assignment, theta_dict, bic = None, None, -1e10
             return cluster_assignment, theta_dict, bic
             
         if pool is not None:
@@ -206,11 +216,11 @@ class TICC:
             bic = computeBIC(self.K, 
                              self.nrow, 
                              cluster_assignment, 
-                             theta_dict,
-                             S_dict)
-            return cluster_assignment, theta_dict, bic
+                             self.theta_dict,
+                             self.S_dict)
+            return cluster_assignment, self.theta_dict, bic
         else:
-            return cluster_assignment, theta_dict
+            return cluster_assignment, self.theta_dict
 
 
     def write_plot(self, cluster_assignment, str_NULL, training_indices, iters):
@@ -229,7 +239,7 @@ class TICC:
             print("Done writing the figure")
 
 
-    def optimize_clusters(self, upper_theta_dict, theta_dict, S_est_dict):
+    def optimize_clusters(self, upper_theta_dict):
         for k in range(self.K):
             if upper_theta_dict[k] == None:
                 continue
@@ -239,23 +249,23 @@ class TICC:
                 print("OPTIMIZATION for Cluster #", k, "DONE!!!")
             # THIS IS THE SOLUTION
             theta = upperToFull(upper_theta, 0) # full theta (inv covariance)
+            log_det_theta = np.log(np.linalg.det(theta))  # log(det(sigma^-2))
             covariance = np.linalg.inv(theta)
-            # Store the covariance, inverse-covariance
-            theta_dict[k] = theta
-            S_est_dict[k] = covariance
+            # Store the covariance, inverse-covariance, log_det_theta
+            self.theta_dict[k] = theta
+            self.S_est_dict[k] = covariance
+            self.log_det_theta_dict[k] = log_det_theta
 
 
-    def train_clusters(self, D_train, mu_dict, S_dict, P_dict, pool):
+    def train_clusters(self, D_train, P_dict, pool):
         """
-        args:
-            - lambda
-            - theta
-            - empirical covariance
-            - len(P_k)
         return:
+            - empirical covariance
+            - empirical mean
             - upper_theta_dict
         """
         upper_theta_dict = {k:None for k in range(self.K)}
+
         for k in range(self.K):
             P_k = P_dict[k]
             if len(P_k) != 0:
@@ -273,8 +283,8 @@ class TICC:
                 # upper_theta_dict[k] = pool_result.get()
                 upper_theta_dict[k] = pool_result
                 # save empirical mean and covariance
-                mu_dict[k] = np.mean(D_train_c, axis=0)
-                S_dict[k] = S
+                self.mu_dict[k] = np.mean(D_train_c, axis=0)
+                self.S_dict[k] = S
         return upper_theta_dict
 
 
@@ -297,7 +307,7 @@ class TICC:
             print("num stacked", self.w)
 
 
-    def predict_clusters(self, test_data=None):
+    def predict_clusters(self, test_data):
         '''
         Given the current trained model, predict clusters.  
         If the cluster segmentation has not been optimized yet,
@@ -311,30 +321,19 @@ class TICC:
         Returns:
             vector of predicted cluster for the points
         '''
-        if test_data is not None:
-            if not isinstance(test_data, np.ndarray):
-                raise TypeError("input must be a numpy array!")
-        else:
-            test_data = self.trained_model['D_train']
+        if not isinstance(test_data, np.ndarray):
+            raise TypeError("input must be a numpy array!")
 
         # SMOOTHENING
         LLE_given_theta = \
-            self.smoothen_clusters(test_data,
-                                   self.trained_model['theta_dict'],
-                                   self.trained_model['mu_dict'])
+            self.smoothen_clusters(test_data)
 
         # Update cluster points - using NEW smoothening
         cluster_assignment = updateClusters(LLE_given_theta, beta=self.bt)
         return cluster_assignment
 
 
-    def smoothen_clusters(self, D_train, theta_dict, mu_dict):
-        log_det_theta_dict = {}  # cluster to log_det
-        for k in range(self.K):
-            theta_k = theta_dict[k]
-            log_det_theta_k = np.log(np.linalg.det(theta_k))  # log(det(sigma^-2))
-            log_det_theta_dict[k] = log_det_theta_k
-
+    def smoothen_clusters(self, D_train):
         # For each point compute the LLE
         if self.verbose:
             print("beginning the smoothening ALGORITHM")
@@ -346,9 +345,9 @@ class TICC:
         for t in range(T):
             if t + self.w - 1 < D_train.shape[0]:
                 for k in range(self.K):
-                    mu_k = mu_dict[k]
-                    theta_k = theta_dict[k]
-                    log_det_theta_k = log_det_theta_dict[k]
+                    mu_k = self.mu_dict[k]
+                    theta_k = self.theta_dict[k]
+                    log_det_theta_k = self.log_det_theta_dict[k]
                     
                     X2 = (D_train[t, :] - mu_k).reshape([self.probSize, 1])
                     lle = np.dot(X2.T, np.dot(theta_k, X2)) - log_det_theta_k
