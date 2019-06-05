@@ -161,7 +161,7 @@ class GlobalTICC:
                 cluster_assignment_list = []
                 new_P_dict_list = []
                 for D_train in D_train_list:
-                    cluster_assignment, _ = self.predict_clusters(D_train)
+                    cluster_assignment, log_likelihood = self.predict_clusters(D_train)
                     new_P_dict = self.get_P_dict(cluster_assignment)
                     cluster_assignment_list.append(cluster_assignment)
                     new_P_dict_list.append(new_P_dict)
@@ -236,16 +236,9 @@ class GlobalTICC:
             pool.close()
             pool.join()
 
-        # return
-        # pointwise_lle_sum = 0
-        # T = 0
-        # for D_train in D_train_list:
-        #     _, pointwise_lle = self.predict_clusters(D_train)
-        #     pointwise_lle_sum += np.sum(pointwise_lle)
-        #     T += len(pointwise_lle)
         T = np.sum([len(c) for c in cluster_assignment_list])
-        bic = compute_BIC_pointwise(T, self.K, self.theta_dict, self.S_dict)
-                                    # pointwise_lle=pointwise_lle_sum)
+        bic = compute_BIC_pointwise(T, self.K, self.theta_dict, self.S_dict, 
+            lle_list=log_likelihood, P_dict=new_P_dict)
 
         return cluster_assignment_list, self.theta_dict, bic, iters
 
@@ -258,6 +251,7 @@ class GlobalTICC:
 
         # data preparation according to window_size
         cluster_assignment_list = []
+        log_likelihood_list = []
         D_test_list = []
         for input_data in input_data_list:
             # Stack the test data
@@ -269,13 +263,19 @@ class GlobalTICC:
             cluster_assignment, log_likelihood = self.predict_clusters(D_test)
             cluster_assignment_list.append(cluster_assignment)
             D_test_list.append(D_test)
+            log_likelihood_list.append(log_likelihood)
 
         cluster_assignment_flat = np.concatenate(cluster_assignment_list, axis=0)
+        log_likelihood_flat = np.concatenate(log_likelihood_list, axis=0)
+        P_dict_flat = self.get_P_dict(cluster_assignment_flat)
 
         D_test_flat = np.concatenate(D_test_list, axis=0)
         test_S_dict = self.get_S_dict(D_test_flat, cluster_assignment_flat)
         T = len(cluster_assignment_flat)
-        bic = compute_BIC_pointwise(T, self.K, self.theta_dict, test_S_dict)
+        bic = compute_BIC_pointwise(
+            T, self.K, self.theta_dict, test_S_dict, 
+            lle_list=log_likelihood_flat, 
+            P_dict=P_dict_flat)
 
         
         if self.verbose:

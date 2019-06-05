@@ -104,7 +104,7 @@ def updateClusters(log_likelihood, beta=1):
 #     return BIC
 
 def compute_BIC_pointwise(T, K, theta_dict, S_dict, 
-                          threshold=2e-5):#, pointwise_lle=None):
+                          threshold=2e-5, lle_list=None, P_dict=None):
     """
     compute BIC score for the clusters 
     ---
@@ -131,12 +131,17 @@ def compute_BIC_pointwise(T, K, theta_dict, S_dict,
         mod_lle += log_det_theta_k - tr_S_theta_k
         nonzero_params += np.sum(np.abs(theta_dict[k]) > threshold)
     
-    # if pointwise_lle is not None:
-    #     point_lle = -np.sum(pointwise_lle)
-    #     tot_lle = mod_lle / K + point_lle
+    if lle_list is not None:
+        point_lle = 0
+        lle_list = np.array(lle_list)
+        for k, P_k in P_dict.items():
+            point_lle += np.sum(lle_list[P_k]) / len(P_k)
+        # point_lle = np.sum(lle_list)
+        print(mod_lle, point_lle)
+        tot_lle = mod_lle / K + point_lle
     # else:
 
-    
+
     tot_lle = mod_lle / K
 
     BIC = nonzero_params * np.log(T) - 2 * tot_lle

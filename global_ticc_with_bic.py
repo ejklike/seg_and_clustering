@@ -81,6 +81,7 @@ def loop_ticc_modeling(data_list, tst_data_list, prefix_string, args):
             # dump solution
             solution_dict = {
                 'ticc': ticc,
+                'iters': iters,
                 'number_of_clusters': number_of_clusters,
                 'bic': bic,
                 'cluster_assignment': cluster_assignment_list,
@@ -103,18 +104,18 @@ def loop_ticc_modeling(data_list, tst_data_list, prefix_string, args):
                 'cluster_MRFs': cluster_MRFs}
             utils.dump_solution(solution_dict, this_solution_path)
 
-        #---#
-        _, bic = ticc.test(trn_data_list)
-        # dump solution
-        solution_dict = {
-            'ticc': ticc,
-            'iters': iters,
-            'number_of_clusters': number_of_clusters,
-            'bic': bic,
-            'cluster_assignment': cluster_assignment_list,
-            'cluster_MRFs': cluster_MRFs}
-        utils.dump_solution(solution_dict, this_solution_path)
-        #---#
+        # #---#
+        # _, bic = ticc.test(trn_data_list)
+        # # dump solution
+        # solution_dict = {
+        #     'ticc': ticc,
+        #     'iters': iters,
+        #     'number_of_clusters': number_of_clusters,
+        #     'bic': bic,
+        #     'cluster_assignment': cluster_assignment_list,
+        #     'cluster_MRFs': cluster_MRFs}
+        # utils.dump_solution(solution_dict, this_solution_path)
+        # #---#
         
         # test
         if bic < 1e10:
