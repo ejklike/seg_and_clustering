@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 
+data/
 trash/
 output_folder/
 

@@ -9,11 +9,8 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import matplotlib.patches as patches
 from matplotlib.ticker import FormatStrFormatter
-# import matplotlib.animation as animation
+import matplotlib.animation as anim
 import imageio
-# from Figtodat import fig2img
-# from images2gif import writeGif
-
 
 
 import utils
@@ -39,7 +36,25 @@ hexadecimal_color_list = [
     "330000","ff0000","cc99ff","b0800f","3bd9eb",
     "ef3e1b"]
 
-__all__ = ['draw_path', 'plot_clustering_result', 'plot_path_by_segment']
+__all__ = ['plot_clustering_result', 'plot_path_by_segment', 'draw_bic_plot']
+
+
+def draw_bic_plot(trn_bic_list, tst_bic_list, prefix_string, args):
+    # visualization bic chart
+    f, ax = plt.subplots(figsize=(6, 4))
+    ax.set_title('BIC score')
+    trn_bic_list = [bic if bic < 1e10 else None for bic in trn_bic_list]
+    tst_bic_list = [bic if bic < 1e10 else None for bic in tst_bic_list]
+    x = np.arange(args.min_nc, args.max_nc+1)
+    ax.plot(x, trn_bic_list, color='C0', marker='o', markersize=3, label='train')
+    ax.plot(x, tst_bic_list, color='C1', marker='o', markersize=3, label='test')
+    ax.set_xlabel('n_cluster')
+    ax.set_ylabel('BIC')
+    ax.legend(loc='best')
+    plt.tight_layout()
+    plt.savefig(prefix_string + '_bic_plot({}~{}).png'
+                .format(args.min_nc, args.max_nc))
+    plt.close()
 
 
 def plot_clustering_result(df, 
@@ -150,21 +165,6 @@ def plot_clustering_result(df,
     plt.close()
 
 
-def draw_path(df, vin, ign_on_time, 
-              save_to=None, show=True,
-              verbose=False):
-    longitute, latitude = utils.filter_to_one_path(df, vin, ign_on_time)
-    if verbose:
-        print('len of lon, lat: ', len(longitute), len(latitude))
-    title = utils.get_str_of_trip(vin, ign_on_time)
-    plot_path_by_segment(longitute, 
-                         latitude,
-                         title=title, 
-                         save_to=save_to, 
-                         figsize=(6, 6), 
-                         show=show)
-
-
 def plot_path_by_segment(longitude, latitude, 
                          cluster_assignment=None,
                          figsize=(10, 10), 
@@ -233,6 +233,23 @@ def plot_path_by_segment(longitude, latitude,
     plt.close()
 
 
+class AnimatedGif:
+    def __init__(self, figsize):
+        self.fig = plt.figure(figsize=figsize)
+        ax = self.fig.add_axes([0, 0, 1, 1], frameon=False, aspect=1)
+        self.images = []
+ 
+    def add(self, image, label=''):
+        plt_im = plt.imshow(image, cmap='Greys', vmin=0, vmax=1, animated=True)
+        plt_txt = plt.text(10, 310, label, color='red')
+        self.images.append([plt_im, plt_txt])
+ 
+    def save(self, filename):
+        animation = anim.ArtistAnimation(self.fig, self.images)
+        animation.save(filename, writer='imagemagick', fps=1)
+
+
+
 def plot_path_sequence(longitude, latitude, 
                        cluster_assignment=None,
                        figsize=(10, 10), 
@@ -297,19 +314,4 @@ def plot_path_sequence(longitude, latitude,
         if title is not None:
             f.suptitle(title + '(t={})'.format(t))
 
-        f.canvas.draw()
-        im = np.frombuffer(f.canvas.tostring_rgb(), dtype='uint8')
-        im = im.reshape(f.canvas.get_width_height()[::-1] + (3,))
-
-        # im = plt.imshow(f, animated=True)
-        # images.append([im])
-
-        # images.append(fig2img(f))
-        # this_save_to = save_to.format(t)
-        # if save_to is not None:
-        #     plt.savefig(this_save_to)
-
-    # writeGif(save_to, images, duration=0.1, dither=0)
-    # ani = animation.ArtistAnimation()
-    imageio.mimsave(save_to, images, fps=10)
     plt.close()

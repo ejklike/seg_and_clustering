@@ -25,10 +25,12 @@ def load_solution(soultion_path):
     with open(soultion_path, 'rb') as handle:
         solution_dict = pickle.load(handle)
         number_of_clusters = solution_dict['number_of_clusters']
+        ticc = solution_dict['ticc']
+        iters = solution_dict['iters']
         bic = solution_dict['bic']
         cluster_MRFs = solution_dict['cluster_MRFs']
         cluster_assignment = solution_dict['cluster_assignment']
-    return number_of_clusters, bic, cluster_MRFs, cluster_assignment
+    return number_of_clusters, ticc, iters, bic, cluster_MRFs, cluster_assignment
 
 def maybe_exist(directory):
     """make sure the existence of given directory"""
