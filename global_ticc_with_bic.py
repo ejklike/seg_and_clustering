@@ -44,15 +44,13 @@ def run_ticc(data_for_modeling, number_of_clusters, prefix_string, args):
                       beta=args.bt, 
                       maxIters=args.maxiter, 
                       threshold=args.threshold,
-                      write_out_file=write_out_file, 
                       prefix_string=prefix_string, 
                       num_proc=args.num_proc,
-                      compute_BIC=True, 
                       verbose=args.verbose)
-    cluster_assignment_list, cluster_MRFs, bic, iters = \
+    cluster_assignment_list, cluster_MRFs, iters, score_dict = \
         ticc.fit(data_for_modeling)
 
-    return ticc, iters, bic, cluster_MRFs, cluster_assignment_list
+    return cluster_assignment_list, cluster_MRFs, ticc, iters, score_dict
 
 
 def loop_ticc_modeling(data_list, tst_data_list, prefix_string, args):
@@ -73,26 +71,18 @@ def loop_ticc_modeling(data_list, tst_data_list, prefix_string, args):
         utils.maybe_exist(this_prefix_string)
         this_solution_path = this_prefix_string + "/solution.pkl"
 
+        # print('nC={} ... '.format(number_of_clusters), end='')
+
         ### if: solution is already obtained ==> load solution
         if os.path.exists(this_solution_path):
             # load solution
             _, ticc, iters, bic, cluster_MRFs, cluster_assignment_list = \
-                utils.load_solution(this_solution_path)
-            # dump solution
-            solution_dict = {
-                'ticc': ticc,
-                'iters': iters,
-                'number_of_clusters': number_of_clusters,
-                'bic': bic,
-                'cluster_assignment': cluster_assignment_list,
-                'cluster_MRFs': cluster_MRFs}
-            utils.dump_solution(solution_dict, this_solution_path)
-            
+                utils.load_solution(this_solution_path)            
 
         ### else: no solution exist ==> run ticc and get solution
         else:
             # run ticc
-            ticc, iters, bic, cluster_MRFs, cluster_assignment_list = \
+            cluster_assignment_list, cluster_MRFs, ticc, iters, score_dict = \
                 run_ticc(data_list, number_of_clusters, this_prefix_string, args)
             # dump solution
             solution_dict = {
@@ -104,8 +94,10 @@ def loop_ticc_modeling(data_list, tst_data_list, prefix_string, args):
                 'cluster_MRFs': cluster_MRFs}
             utils.dump_solution(solution_dict, this_solution_path)
 
-        # #---#
-        # _, bic = ticc.test(trn_data_list)
+        # # #--- update old solution data#
+        # ticc.str_NULL = this_prefix_string + '/'
+        # if cluster_MRFs is None:
+        #     bic = np.nan
         # # dump solution
         # solution_dict = {
         #     'ticc': ticc,
@@ -115,14 +107,23 @@ def loop_ticc_modeling(data_list, tst_data_list, prefix_string, args):
         #     'cluster_assignment': cluster_assignment_list,
         #     'cluster_MRFs': cluster_MRFs}
         # utils.dump_solution(solution_dict, this_solution_path)
-        # #---#
-        
+        # # #---#
+
         # test
-        if bic < 1e10:
+        if cluster_MRFs is not None:
+            if args.verbose:
+                print('---TRN', end='')
+            _, bic_trn = ticc.test(trn_data_list)
+            assert bic_trn == bic
+            if args.verbose:
+                print('---TST', end='')
             _, bic_tst = ticc.test(tst_data_list)
         else:
             bic_tst = np.nan
-        print('nC={} | iter={} | bic(trn)={:.1f}, bic(tst)={:.1f}'
+
+        # print('| iter={} | bic(trn)={:.1f}, bic(tst)={:.1f}'
+        #       .format(iters, bic, bic_tst), end='')
+        print('nc={} | iter={} | bic(trn)={:.1f}, bic(tst)={:.1f}'
               .format(number_of_clusters, iters, bic, bic_tst), end='')
         
         trn_bic_list.append(bic)
@@ -137,7 +138,7 @@ def loop_ticc_modeling(data_list, tst_data_list, prefix_string, args):
             best_cluster_MRFs = cluster_MRFs
         else:
             print('')
-        
+
     cluster_assignment_list_tst, bic_tst = best_ticc.test(tst_data_list)
     if args.max_nc - args.min_nc > 0:
         draw_bic_plot(trn_bic_list, tst_bic_list, prefix_string, args)
@@ -318,6 +319,12 @@ def betweenness_centrality(cluster_MRFs,
                     dist_by_cluster_dict[c].append(dist)
             BC_df['avg(km/h)'] = \
                 [np.mean(dist_by_cluster_dict[k]) for k in range(number_of_clusters)]
+            BC_df['std(km/h)'] = \
+                [np.std(dist_by_cluster_dict[k]) for k in range(number_of_clusters)]
+            BC_df['min(km/h)'] = \
+                [np.min(dist_by_cluster_dict[k]) for k in range(number_of_clusters)]
+            BC_df['max(km/h)'] = \
+                [np.max(dist_by_cluster_dict[k]) for k in range(number_of_clusters)]
 
             # SAVE dataframe
             BC_df.to_csv(bc_path)
@@ -339,11 +346,6 @@ if __name__ == '__main__':
         default=None,
         help='target vin')
     parser.add_argument(
-        '--ws', 
-        type=int, 
-        default=1,
-        help='window size')
-    parser.add_argument(
         '--verbose', 
         type=bool, 
         nargs='?',
@@ -363,9 +365,15 @@ if __name__ == '__main__':
         help='lambda (sparsity in Toplitz matrix)')
     parser.add_argument(
         '--bt', 
-        type=float, 
+        type=int, 
         default=200,
         help='beta (segmentation penalty)')
+    parser.add_argument(
+        '--ws', 
+        type=int, 
+        default=1,
+        help='window size')
+
     parser.add_argument(
         '--maxiter', 
         type=int, 
@@ -395,7 +403,6 @@ if __name__ == '__main__':
 
     # Parse input arguments
     args, unparsed = parser.parse_known_args()
-    write_out_file = True
 
     print('')
     print("lambda (sparsity penalty)", args.ld)
@@ -411,6 +418,7 @@ if __name__ == '__main__':
     else:
         df = pd.read_csv(rawdata_path, low_memory=False)
 
+    # data split
     #######################################################################[:10]
     ign_on_time_list = list(df.ign_on_time.unique())[:100]
     num_trips = len(ign_on_time_list)
@@ -432,6 +440,9 @@ if __name__ == '__main__':
     utils.maybe_exist(basedir)
     prefix_string = (basedir + 'ws={}ld={}bt={}'
                      .format(args.ws, args.ld, args.bt))
+    print('')
+    print('prefix string:', prefix_string)
+    print('')
 
     #################
     # LOAD DATA

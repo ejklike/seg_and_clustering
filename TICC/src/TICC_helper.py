@@ -103,8 +103,8 @@ def updateClusters(log_likelihood, beta=1):
 
 #     return BIC
 
-def compute_BIC_pointwise(T, K, theta_dict, S_dict, 
-                          threshold=2e-5, lle_list=None, P_dict=None):
+def compute_BIC_pointwise(T, K, theta_dict, S_dict, criterion='B',
+                          threshold=2e-5, lle_list=None, P_dict=None, verbose=False):
     """
     compute BIC score for the clusters 
     ---
@@ -123,6 +123,8 @@ def compute_BIC_pointwise(T, K, theta_dict, S_dict,
 
     """
 
+    assert criterion in [None, 'A', 'B']
+
     mod_lle = 0
     nonzero_params = 0
     for k in range(K):
@@ -131,19 +133,28 @@ def compute_BIC_pointwise(T, K, theta_dict, S_dict,
         mod_lle += log_det_theta_k - tr_S_theta_k
         nonzero_params += np.sum(np.abs(theta_dict[k]) > threshold)
     
-    if lle_list is not None:
-        point_lle = 0
-        lle_list = np.array(lle_list)
-        for k, P_k in P_dict.items():
-            point_lle += np.sum(lle_list[P_k]) / len(P_k)
-        # point_lle = np.sum(lle_list)
-        print(mod_lle, point_lle)
-        tot_lle = mod_lle / K + point_lle
-    # else:
+    # if lle_list is not None:
+    #     point_lle = 0
+    #     lle_list = np.array(lle_list)
+    #     for k, P_k in P_dict.items():
+    #         point_lle += np.sum(lle_list[P_k]) / len(P_k)
+    #     # point_lle = np.sum(lle_list)
+    #     print(mod_lle, point_lle, nonzero_params)
+    #     # tot_lle = mod_lle / K + point_lle
+    # # else:
 
 
-    tot_lle = mod_lle / K
-
+    tot_lle = mod_lle
+    AIC = 2 * nonzero_params - 2 * tot_lle
     BIC = nonzero_params * np.log(T) - 2 * tot_lle
 
-    return BIC
+    if verbose:
+        print('---AIC={:.1f}, BIC={:.1f} | log(T)={:.1f}, K={}, MLL={:.1f}'
+            .format(AIC, BIC, np.log(T), nonzero_params, mod_lle))
+
+    if criterion is None:
+        return tot_lle#, nonzero_params
+    if criterion == 'A':
+        return AIC
+    if criterion == 'B':
+        return BIC
