@@ -30,7 +30,19 @@ python train.py --verbose --min_nc 3 --max_nc 10 --maxiter 10 --ws 2
 python train.py --verbose --test_size 0 --min_nc 3 --max_nc 10 --maxiter 10 --ws 2
 ```
 
+- 모듈 인자 설명
+  - `verbose`: TICC 알고리즘 학습 과정을 낱낱이 출력. (기본값 `False`)
+  - `num_proc`: 멀티프로세싱 (CPU)을 위한 할당 자원 개수. (기본값 `4`)
+  - `ld`: lambda (sparsity in Toplitz matrix) (기본값 `0.005`)
+  - `bt`: beta (segmentation penalty) (기본값 `200`)
+  - `ws`: window size (기본값 `1`)
+  - `test-size`: 전체 데이터 중 테스트 데이터 비율 (기본값 `0.3`)
+  - `maxiter`: TICC 알고리즘 (E & M-steps) 최대 반복 횟수 (기본값 `100`)
+  - `min_nc`: 원하는 클러스터 개수 범위(`min_nc`~`max_nc`) (기본값 `3`)
+  - `max_nc`: 원하는 클러스터 개수 범위(`min_nc`~`max_nc`) (기본값 `10`)
+
 - Usage statement
+
 ```
 > python train.py -h
 usage: train.py [-h] [--verbose [VERBOSE]] [--num_proc NUM_PROC] [--ld LD]
@@ -70,6 +82,13 @@ python interpret.py 3 --ws 1
 python interpret.py 8 --maxiter 10 --ws 2
 python interpret.py 6 --test_size 0 --ws 2
 ```
+
+- 모듈 인자 설명
+  - `nc`: 원하는 클러스터 번호 (필수로 입력해줘야 함!)
+  - `ld`: lambda (sparsity in Toplitz matrix) (기본값 `0.005`)
+  - `bt`: beta (segmentation penalty) (기본값 `200`)
+  - `ws`: window size (기본값 `1`)
+  - `test-size`: 전체 데이터 중 테스트 데이터 비율 (기본값 `0.3`)
 
 - Usage statements
 
