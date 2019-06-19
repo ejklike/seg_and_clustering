@@ -12,16 +12,14 @@ def upperToFull(a, eps=0):
     return A
 
 
-def updateClusters(log_likelihood, beta=1):
+def updateClusters(NLL, beta=1):
     """
     Takes in log_likelihood matrix and computes the path that minimizes
     the total cost over the path
 
     Note: switch penalty (=beta) > 0
     """
-    T, K = log_likelihood.shape
-
-    NLL = -log_likelihood
+    T, K = NLL.shape
 
     # compute future costs
     FutureCost = np.zeros(NLL.shape)

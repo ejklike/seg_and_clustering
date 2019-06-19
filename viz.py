@@ -1,6 +1,5 @@
 import os
 import numpy as np
-import pandas as pd
 
 import seaborn as sns
 # sns.set(style='white', context='talk')
@@ -9,11 +8,9 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import matplotlib.patches as patches
 from matplotlib.ticker import FormatStrFormatter
-import matplotlib.animation as anim
-import imageio
-
 
 import utils
+from dataio import COLUMNS_FOR_MODELING_SHORT
 
 
 # plt.rcParams.update({'font.size': 8})
@@ -39,47 +36,115 @@ hexadecimal_color_list = [
 __all__ = ['plot_clustering_result', 'plot_path_by_segment', 'draw_bic_plot']
 
 
-def draw_bic_plot(trn_bic_list, tst_bic_list, prefix_string, args):
+def _make_patch_spines_invisible(ax):
+    ax.set_frame_on(True)
+    ax.patch.set_visible(False)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+
+
+def draw_bic_plot(trn_score_dict, tst_score_dict, args):
+
+    trn_bic_list = [sdict['bic'] for sdict in trn_score_dict]
+    tst_bic_list = [sdict['bic'] for sdict in tst_score_dict]
+
+    trn_dbic_list = [trn_bic_list[i+1] - bic
+                     if trn_bic_list[i+1] is not None and bic is not None
+                     else None
+                     for i, bic in enumerate(trn_bic_list[:-1])]
+    tst_dbic_list = [tst_bic_list[i+1] - bic
+                     if tst_bic_list[i+1] is not None and bic is not None
+                     else None
+                     for i, bic in enumerate(tst_bic_list[:-1])]
+
+    trn_ll_list = [-sdict['nll'] if sdict['nll'] is not None else sdict['nll'] 
+                   for sdict in trn_score_dict]
+    tst_ll_list = [-sdict['nll'] if sdict['nll'] is not None else sdict['nll']
+                   for sdict in tst_score_dict]
+
+    np_list = [sdict['n_params'] for sdict in trn_score_dict]
+
     # visualization bic chart
-    f, ax = plt.subplots(figsize=(6, 4))
-    ax.set_title('BIC score')
-    trn_bic_list = [bic if bic < 1e10 else None for bic in trn_bic_list]
-    tst_bic_list = [bic if bic < 1e10 else None for bic in tst_bic_list]
+    f, (ax1, ax2) = plt.subplots(nrows=2, sharex=True, figsize=(8, 8))
+    f.subplots_adjust(right=0.75)
+
+    par1 = ax1.twinx()
+    par2 = ax2.twinx()
+
+    ax2.set_xlabel('n_cluster')
     x = np.arange(args.min_nc, args.max_nc+1)
-    ax.plot(x, trn_bic_list, color='C0', marker='o', markersize=3, label='train')
-    ax.plot(x, tst_bic_list, color='C1', marker='o', markersize=3, label='test')
-    ax.set_xlabel('n_cluster')
-    ax.set_ylabel('BIC')
-    ax.legend(loc='best')
+
+    mkw = dict(markersize=3, marker='o')
+    
+    ax1.set_ylabel("number of nonzero params")
+    p11, = ax1.plot(x, np_list, color='C2', label="number of nonzero params", **mkw)
+
+    par1.set_ylabel('Log-Likelihood')
+    p13, = par1.plot(x, trn_ll_list, color='C0', label="Log-Likelihood (trn)", **mkw)
+    p14, = par1.plot(x, tst_ll_list, color='C0', linestyle='dashed', label="Log-Likelihood (tst)", **mkw)
+    
+    ax2.set_ylabel('BIC')
+    p21, = ax2.plot(x, trn_bic_list, color='C3', label="BIC (trn)", **mkw)
+    p22, = ax2.plot(x, tst_bic_list, color='C3', linestyle='dashed', label="BIC (tst)", **mkw)
+    
+    par2.set_ylabel('Gradient of BIC')
+    p23, = par2.plot(x[:-1], trn_dbic_list, color='C1', label="Grad. BIC (trn)", **mkw)
+    p24, = par2.plot(x[:-1], tst_dbic_list, color='C1', linestyle='dashed', label="Grad. BIC (tst)", **mkw)
+
+    ax1.yaxis.label.set_color(p11.get_color())
+    par1.yaxis.label.set_color(p13.get_color())
+    ax2.yaxis.label.set_color(p21.get_color())
+    par2.yaxis.label.set_color(p23.get_color())
+
+    tkw = dict(size=4, width=1.5)
+    ax1.tick_params(axis='x', **tkw)
+    ax2.tick_params(axis='x', **tkw)
+    ax1.tick_params(axis='y', colors=p11.get_color(), **tkw)
+    ax2.tick_params(axis='y', colors=p21.get_color(), **tkw)
+    par1.tick_params(axis='y', colors=p13.get_color(), **tkw)
+    par2.tick_params(axis='y', colors=p23.get_color(), **tkw)
+
+    lines1 = [p11, p13, p14]
+    lines2 = [p21, p22, p23, p24]
+    ax1.legend(lines1, [l.get_label() for l in lines1])
+    ax2.legend(lines2, [l.get_label() for l in lines2])
+    
+    f.suptitle('Clustering scores (w={}, lambda={}, beta={})'
+               .format(args.ws, args.ld, args.bt))
     plt.tight_layout()
-    plt.savefig(prefix_string + '_bic_plot({}~{}).png'
-                .format(args.min_nc, args.max_nc))
+    f.subplots_adjust(top=0.95)
+    fname = (args.basedir + 'score_plot(nc_from_{}_to_{}).png'
+             .format(args.min_nc, args.max_nc))
+    plt.savefig(fname)
     plt.close()
+
+    print('')
+    print('Please check the score plot for choosing the best number of cluster:')
+    print(fname)
+    print('')
 
 
 def plot_clustering_result(df, 
                            cluster_assignment,
+                           nll_vector,
                            figsize=(9, 12), 
                            title=None,
                            save_to=None,
-                           show=True):
+                           show=False):
 
     n_data, n_col = df.shape
-    colnames = df.columns
 
     if cluster_assignment is None:
-        cluster_assignment = n_data * [0]
+        cluster_assignment = np.zeros(n_data)
     cluster_ids = np.unique(cluster_assignment)
     n_cluster = cluster_ids.shape[0]
     assert n_data == len(cluster_assignment)
-    assert len(colnames) == n_col
-
-    # print('#time={}, #col={}, #cluster={}'
-    #       .format(n_data, n_col, n_cluster))
-    # print(cluster_ids)
+    assert len(COLUMNS_FOR_MODELING_SHORT) == n_col
+    # if this assertion fails, then add more palette colors!
+    assert np.max(cluster_assignment) + 1 <= len(palette) 
 
     # define subplot
-    f, ax = plt.subplots(n_col + 1, 1, 
+    f, ax = plt.subplots(n_col + 2, 1, 
                          sharex=True, figsize=figsize)
     
     # x-axis (time)
@@ -124,7 +189,7 @@ def plot_clustering_result(df,
                    y0 + ylen*2/5, 
                    str(int(cid)), 
                    color='w',
-                   fontsize=20)
+                   fontsize=12)
     plt.setp(ax[0].get_yticklabels(), visible=False)
 
     # set xlim, ylim
@@ -139,22 +204,39 @@ def plot_clustering_result(df,
     ax[0].legend(legend_lines, legend_labels, 
         loc="upper center", ncol=n_cluster, shadow=True)
 
+    # plot nll
+    xy = np.array([(x,y) for x, y in zip(x, nll_vector)]).reshape(-1, 2)
+    for start, stop, _, color in zip(xy[:-1], 
+                                     xy[1:], 
+                                     colors[:-1], 
+                                     colors[1:]):    
+        seg_x, seg_y = zip(start, stop)
+        ax[1].plot(seg_x, seg_y, color=color)
+        ax[1].set_ylabel('NLL')
+    ax[1].text(n_data/20, 
+               (np.max(nll_vector) + np.mean(nll_vector))/2, 
+               'avg(NLL)={:.1f}'.format(np.mean(nll_vector)), 
+               fontsize=12)
+    # add legend to the bar plot
+    avg_nll_dict = {
+        cid: np.mean([nll for c, nll in zip(cluster_assignment, nll_vector) if c==cid]) 
+        for cid in cluster_ids}
+    legend_labels = ['{}: avg={:.1f}'.format(cid, avg_nll) 
+                     for cid, avg_nll in avg_nll_dict.items()]
+    ax[1].legend(legend_lines, legend_labels, 
+        loc="upper center", ncol=n_cluster, shadow=True)
+
+    # plot sensor signals
     for i in range(n_col):
         y = df.iloc[:, i]
         xy = np.array([x, y]).T.reshape(-1, 2)
-
-        for start, stop, color0, color in zip(xy[:-1], 
-                                              xy[1:], 
-                                              colors[:-1], 
-                                              colors[1:]):
-            # if color0 == color:
-            #     seg_x, seg_y = zip(start, stop)
-            #     ax[i+1].plot(seg_x, seg_y, color=color)
-        
+        for start, stop, _, color in zip(xy[:-1], 
+                                         xy[1:], 
+                                         colors[:-1], 
+                                         colors[1:]):
             seg_x, seg_y = zip(start, stop)
-            ax[i+1].plot(seg_x, seg_y, color=color)
-        if colnames is not None:
-            ax[i+1].set_ylabel(colnames[i])
+            ax[i+2].plot(seg_x, seg_y, color=color)
+        ax[i+2].set_ylabel(COLUMNS_FOR_MODELING_SHORT[i])
     
     plt.tight_layout()
     f.subplots_adjust(top=0.97)
@@ -185,6 +267,13 @@ def plot_path_by_segment(longitude, latitude,
         assert len(latitude) == len(cluster_assignment)
     else:
         cluster_assignment = [0] * len(longitude)
+
+    # filter points with zero lng or lat
+    zero_idx = [i for i in range(len(longitude))
+                if longitude[i] == 0 and latitude[i] == 0]
+    longitude = np.delete(longitude, zero_idx)
+    latitude = np.delete(latitude, zero_idx)
+    cluster_assignment = np.delete(cluster_assignment, zero_idx)
 
     # define subplot
     f, ax = plt.subplots(figsize=figsize)
@@ -230,88 +319,4 @@ def plot_path_by_segment(longitude, latitude,
         plt.savefig(save_to)
     if show:
         plt.show()
-    plt.close()
-
-
-class AnimatedGif:
-    def __init__(self, figsize):
-        self.fig = plt.figure(figsize=figsize)
-        ax = self.fig.add_axes([0, 0, 1, 1], frameon=False, aspect=1)
-        self.images = []
- 
-    def add(self, image, label=''):
-        plt_im = plt.imshow(image, cmap='Greys', vmin=0, vmax=1, animated=True)
-        plt_txt = plt.text(10, 310, label, color='red')
-        self.images.append([plt_im, plt_txt])
- 
-    def save(self, filename):
-        animation = anim.ArtistAnimation(self.fig, self.images)
-        animation.save(filename, writer='imagemagick', fps=1)
-
-
-
-def plot_path_sequence(longitude, latitude, 
-                       cluster_assignment=None,
-                       figsize=(10, 10), 
-                       title=None,
-                       save_to=None,
-                       show=True):
-    """
-    plot xy path by segment onto the plane
-    args:
-        - longitute, latitude: x, y
-        - cluster_assignment: segment info for all (x, y) pairs
-                              if None, assume one cluster
-    """
-
-    if cluster_assignment is not None:
-        # print(len(longitude), len(latitude), len(cluster_assignment))
-        assert len(longitude) == len(cluster_assignment)
-        assert len(latitude) == len(cluster_assignment)
-    else:
-        cluster_assignment = [0] * len(longitude)
-
-    # define subplot
-    f, ax = plt.subplots(figsize=figsize)
-
-    # draw baseplot (all but transparent path)
-    ax.plot(longitude, latitude, color='w', marker='o', markersize=3)
-    ax.annotate('Start', xy=(longitude[0], latitude[0]), fontsize=12)
-    ax.annotate('End', xy=(longitude[-1], latitude[-1]), fontsize=12)
-    ax.xaxis.set_major_formatter(FormatStrFormatter('%.3f'))
-    ax.yaxis.set_major_formatter(FormatStrFormatter('%.3f'))
-    len_trip = utils.trip_length(longitude, latitude)
-    ax.annotate('Trip summary:\n{:,.0f}min, {:.2f}km'
-                .format(len(longitude)/60, len_trip), 
-                xy=(longitude.mean(), latitude.mean()))
-
-    # add legend to the plot
-    cluster_ids = np.unique(cluster_assignment)
-    n_cluster = cluster_ids.shape[0]
-    if n_cluster > 1:
-        legend_lines = [
-            Line2D([0], [0], color=palette[int(cid)], lw=4) 
-            for cid in cluster_ids]
-        legend_labels = [str(cid) for cid in cluster_ids]
-        ax.legend(legend_lines, legend_labels, ncol=1, shadow=True) #loc="upper center", 
-    plt.tight_layout()
-    f.subplots_adjust(top=0.95)
-
-    # xy pairs and its colors
-    xy = np.array([longitude, latitude]).T.reshape(-1, 2)
-    colors = [palette[int(c)] for c in cluster_assignment]
-
-    images = []
-    for t, start, stop, color in zip(range(len(cluster_assignment)),
-                                     xy[:-1], 
-                                     xy[1:], 
-                                     colors[1:]):    
-        print(t)
-        seg_x, seg_y = zip(start, stop)
-        ax.plot(seg_x, seg_y, color=color, marker='o', markersize=3)
-    
-        # set title
-        if title is not None:
-            f.suptitle(title + '(t={})'.format(t))
-
     plt.close()
