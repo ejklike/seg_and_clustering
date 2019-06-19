@@ -80,7 +80,7 @@ optional arguments:
 ```
 python interpret.py 3 --ws 1
 python interpret.py 8 --maxiter 10 --ws 2
-python interpret.py 6 --test_size 0 --ws 2
+python interpret.py 6 --ws 2
 ```
 
 - 모듈 인자 설명

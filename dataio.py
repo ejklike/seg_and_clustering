@@ -7,7 +7,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from utils import strftime
+from utils import strftime, maybe_exist
 
 #####################
 # DATA SETTING
@@ -104,6 +104,7 @@ class DataLoader:
             WHERE vin in ("%s")''' % (tablename, target_vin)
 
         # DOWNLOADED DATA WILL BE STORED IN THIS PATH
+        maybe_exist('../data/')
         self.rawdata_path = \
             '../data/{}_{}.csv'.format(tablename, target_vin)
 
